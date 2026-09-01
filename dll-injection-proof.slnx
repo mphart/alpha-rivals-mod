@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="dll-injection-proof/dll-injection-proof.vcxproj" Id="f3a4a129-51a9-4604-a6a4-35e3f3186eb0" />
+  <Project Path="inject/inject.vcxproj" Id="275d7096-efb3-4f8c-9ed0-222f79cbe371" />
+</Solution>
