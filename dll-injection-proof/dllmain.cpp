@@ -3,35 +3,109 @@
 #include "state.h"
 #include "util.h"
 #include "minhook.h"
-#include <Xinput.h>   // XINPUT_STATE, XINPUT_GAMEPAD, button bit constants
+#include <Xinput.h>   // XINPUT_STATE, XINPUT_CAPABILITIES, button bit constants
 #include <sstream>    // for hex formatting in log lines
 
 // ============================================================
-// Keyboard hook (GetAsyncKeyState)
+// Game window resolution (needed for focus-hook spoofing below)
+// ============================================================
+
+HWND g_gameWindowHandle = nullptr;
+
+void ResolveGameWindow() {
+    DWORD myPid = GetCurrentProcessId();
+    g_gameWindowHandle = nullptr;
+
+    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        DWORD pid;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid == GetCurrentProcessId() && IsWindowVisible(hwnd)) {
+            g_gameWindowHandle = hwnd;
+            return FALSE; // stop enumerating, found it
+        }
+        return TRUE;
+        }, 0);
+
+    Log("Resolved game window handle: " + std::to_string((uintptr_t)g_gameWindowHandle));
+}
+
+// ============================================================
+// Focus hooks (GetFocus / GetForegroundWindow / GetActiveWindow)
+// ============================================================
+// RoA likely only polls keyboard state when it believes it has focus.
+// These hooks make the game always believe its own window is focused,
+// regardless of which window Windows actually considers active -- this
+// lets input injection work even while the game runs in the background.
+
+typedef HWND(WINAPI* GetFocus_t)();
+GetFocus_t OriginalGetFocus = nullptr;
+
+HWND WINAPI HookedGetFocus() {
+    if (g_gameWindowHandle) return g_gameWindowHandle;
+    return OriginalGetFocus();
+}
+
+typedef HWND(WINAPI* GetForegroundWindow_t)();
+GetForegroundWindow_t OriginalGetForegroundWindow = nullptr;
+
+HWND WINAPI HookedGetForegroundWindow() {
+    if (g_gameWindowHandle) return g_gameWindowHandle;
+    return OriginalGetForegroundWindow();
+}
+
+typedef HWND(WINAPI* GetActiveWindow_t)();
+GetActiveWindow_t OriginalGetActiveWindow = nullptr;
+
+HWND WINAPI HookedGetActiveWindow() {
+    if (g_gameWindowHandle) return g_gameWindowHandle;
+    return OriginalGetActiveWindow();
+}
+
+// ============================================================
+// Keyboard hooks (GetAsyncKeyState + GetKeyState)
 // ============================================================
 
 typedef SHORT(WINAPI* GetAsyncKeyState_t)(int vKey);
 GetAsyncKeyState_t OriginalGetAsyncKeyState = nullptr;
+
+typedef SHORT(WINAPI* GetKeyState_t)(int vKey);
+GetKeyState_t OriginalGetKeyState = nullptr;
 
 volatile bool g_overrideKeys[256] = { false };
 volatile bool g_forcedKeyState[256] = { false };
 
 SHORT WINAPI HookedGetAsyncKeyState(int vKey) {
     if (vKey >= 0 && vKey < 256 && g_overrideKeys[vKey]) {
-        // High bit set (0x8000) means "currently held", matching real API semantics
         return g_forcedKeyState[vKey] ? (SHORT)0x8000 : 0;
     }
     return OriginalGetAsyncKeyState(vKey);
 }
 
+SHORT WINAPI HookedGetKeyState(int vKey) {
+    if (g_overrideKeys[vKey] || (OriginalGetKeyState(vKey) & 0x8000)) {
+        Log("GetKeyState called: vKey=0x" + std::to_string(vKey) +
+            " override=" + std::to_string(g_overrideKeys[vKey]));
+    }
+
+    if (vKey >= 0 && vKey < 256 && g_overrideKeys[vKey]) {
+        return g_forcedKeyState[vKey] ? (SHORT)0x8000 : 0;
+    }
+    return OriginalGetKeyState(vKey);
+}
+
 // ============================================================
-// XInput hook (XInputGetState)
+// XInput hooks (XInputGetState + XInputGetCapabilities)
 // ============================================================
 
 typedef DWORD(WINAPI* XInputGetState_t)(DWORD dwUserIndex, XINPUT_STATE* pState);
 XInputGetState_t OriginalXInputGetState = nullptr;
 
+typedef DWORD(WINAPI* XInputGetCapabilities_t)(DWORD dwUserIndex, DWORD dwFlags, XINPUT_CAPABILITIES* pCapabilities);
+XInputGetCapabilities_t OriginalXInputGetCapabilities = nullptr;
+
+const int NUM_CONTROLLED_JOYSTICKS = 2;
 const int MAX_JOYSTICKS = 4;
+
 volatile bool  g_overrideJoystick[MAX_JOYSTICKS] = { false };
 volatile WORD  g_forcedButtons[MAX_JOYSTICKS] = { 0 };
 volatile SHORT g_forcedThumbLX[MAX_JOYSTICKS] = { 0 };
@@ -39,8 +113,6 @@ volatile SHORT g_forcedThumbLY[MAX_JOYSTICKS] = { 0 };
 volatile BYTE  g_forcedLeftTrigger[MAX_JOYSTICKS] = { 0 };
 volatile BYTE  g_forcedRightTrigger[MAX_JOYSTICKS] = { 0 };
 
-// Set to false once you've confirmed real button/axis values via the log,
-// to stop the log spam during normal use.
 bool g_logRealXInput = true;
 
 DWORD WINAPI HookedXInputGetState(DWORD dwUserIndex, XINPUT_STATE* pState) {
@@ -68,8 +140,24 @@ DWORD WINAPI HookedXInputGetState(DWORD dwUserIndex, XINPUT_STATE* pState) {
     return result;
 }
 
-// Runs on its own thread since it polls/waits for the XInput DLL to be
-// loaded by the game -- must not block pipe setup in MainThread.
+DWORD WINAPI HookedXInputGetCapabilities(DWORD dwUserIndex, DWORD dwFlags, XINPUT_CAPABILITIES* pCapabilities) {
+    if (dwUserIndex < MAX_JOYSTICKS && g_overrideJoystick[dwUserIndex]) {
+        ZeroMemory(pCapabilities, sizeof(XINPUT_CAPABILITIES));
+        pCapabilities->Type = XINPUT_DEVTYPE_GAMEPAD;
+        pCapabilities->SubType = XINPUT_DEVSUBTYPE_GAMEPAD;
+        pCapabilities->Flags = 0;
+        pCapabilities->Gamepad.wButtons = 0xFFFF;
+        pCapabilities->Gamepad.bLeftTrigger = 0xFF;
+        pCapabilities->Gamepad.bRightTrigger = 0xFF;
+        pCapabilities->Gamepad.sThumbLX = -32768;
+        pCapabilities->Gamepad.sThumbLY = -32768;
+        pCapabilities->Gamepad.sThumbRX = -32768;
+        pCapabilities->Gamepad.sThumbRY = -32768;
+        return ERROR_SUCCESS;
+    }
+    return OriginalXInputGetCapabilities(dwUserIndex, dwFlags, pCapabilities);
+}
+
 void SetupXInputHook() {
     HMODULE xinputDll = nullptr;
     const char* candidates[] = { "xinput1_4.dll", "xinput1_3.dll", "xinput9_1_0.dll" };
@@ -90,22 +178,40 @@ void SetupXInputHook() {
         return;
     }
 
-    void* target = GetProcAddress(xinputDll, "XInputGetState");
-    if (!target) {
+    void* stateTarget = GetProcAddress(xinputDll, "XInputGetState");
+    if (!stateTarget) {
         Log("Could not resolve XInputGetState");
-        return;
     }
-
-    if (MH_CreateHook(target, &HookedXInputGetState,
+    else if (MH_CreateHook(stateTarget, &HookedXInputGetState,
         (void**)&OriginalXInputGetState) != MH_OK) {
         Log("MH_CreateHook (XInputGetState) failed");
-        return;
     }
-    if (MH_EnableHook(target) != MH_OK) {
+    else if (MH_EnableHook(stateTarget) != MH_OK) {
         Log("MH_EnableHook (XInputGetState) failed");
-        return;
     }
-    Log("XInput hook installed successfully");
+    else {
+        Log("XInputGetState hook installed successfully");
+    }
+
+    void* capsTarget = GetProcAddress(xinputDll, "XInputGetCapabilities");
+    if (!capsTarget) {
+        Log("Could not resolve XInputGetCapabilities");
+    }
+    else if (MH_CreateHook(capsTarget, &HookedXInputGetCapabilities,
+        (void**)&OriginalXInputGetCapabilities) != MH_OK) {
+        Log("MH_CreateHook (XInputGetCapabilities) failed");
+    }
+    else if (MH_EnableHook(capsTarget) != MH_OK) {
+        Log("MH_EnableHook (XInputGetCapabilities) failed");
+    }
+    else {
+        Log("XInputGetCapabilities hook installed successfully");
+    }
+
+    for (int i = 0; i < NUM_CONTROLLED_JOYSTICKS; ++i) {
+        g_overrideJoystick[i] = true;
+    }
+    Log("Marked joystick indices 0.." + std::to_string(NUM_CONTROLLED_JOYSTICKS - 1) + " as present");
 }
 
 // ============================================================
@@ -115,22 +221,76 @@ void SetupXInputHook() {
 void SetupInputHook() {
     if (MH_Initialize() != MH_OK) { Log("MH_Initialize failed"); return; }
 
-    // --- Keyboard hook (user32 is always loaded by this point) ---
-    HMODULE user32 = GetModuleHandleA("user32.dll");
-    void* keyTarget = GetProcAddress(user32, "GetAsyncKeyState");
+    ResolveGameWindow();
 
-    if (MH_CreateHook(keyTarget, &HookedGetAsyncKeyState,
+    HMODULE user32 = GetModuleHandleA("user32.dll");
+
+    // --- GetAsyncKeyState ---
+    void* asyncKeyTarget = GetProcAddress(user32, "GetAsyncKeyState");
+    if (MH_CreateHook(asyncKeyTarget, &HookedGetAsyncKeyState,
         (void**)&OriginalGetAsyncKeyState) != MH_OK) {
         Log("MH_CreateHook (GetAsyncKeyState) failed");
     }
-    else if (MH_EnableHook(keyTarget) != MH_OK) {
+    else if (MH_EnableHook(asyncKeyTarget) != MH_OK) {
         Log("MH_EnableHook (GetAsyncKeyState) failed");
     }
     else {
-        Log("Keyboard hook installed successfully");
+        Log("GetAsyncKeyState hook installed successfully");
     }
 
-    // --- XInput hook, on its own thread since the DLL may not be
+    // --- GetKeyState (confirmed to be the function RoA actually polls) ---
+    void* keyStateTarget = GetProcAddress(user32, "GetKeyState");
+    if (MH_CreateHook(keyStateTarget, &HookedGetKeyState,
+        (void**)&OriginalGetKeyState) != MH_OK) {
+        Log("MH_CreateHook (GetKeyState) failed");
+    }
+    else if (MH_EnableHook(keyStateTarget) != MH_OK) {
+        Log("MH_EnableHook (GetKeyState) failed");
+    }
+    else {
+        Log("GetKeyState hook installed successfully");
+    }
+
+    // --- GetFocus ---
+    void* focusTarget = GetProcAddress(user32, "GetFocus");
+    if (MH_CreateHook(focusTarget, &HookedGetFocus,
+        (void**)&OriginalGetFocus) != MH_OK) {
+        Log("MH_CreateHook (GetFocus) failed");
+    }
+    else if (MH_EnableHook(focusTarget) != MH_OK) {
+        Log("MH_EnableHook (GetFocus) failed");
+    }
+    else {
+        Log("GetFocus hook installed successfully");
+    }
+
+    // --- GetForegroundWindow ---
+    void* fgTarget = GetProcAddress(user32, "GetForegroundWindow");
+    if (MH_CreateHook(fgTarget, &HookedGetForegroundWindow,
+        (void**)&OriginalGetForegroundWindow) != MH_OK) {
+        Log("MH_CreateHook (GetForegroundWindow) failed");
+    }
+    else if (MH_EnableHook(fgTarget) != MH_OK) {
+        Log("MH_EnableHook (GetForegroundWindow) failed");
+    }
+    else {
+        Log("GetForegroundWindow hook installed successfully");
+    }
+
+    // --- GetActiveWindow ---
+    void* activeTarget = GetProcAddress(user32, "GetActiveWindow");
+    if (MH_CreateHook(activeTarget, &HookedGetActiveWindow,
+        (void**)&OriginalGetActiveWindow) != MH_OK) {
+        Log("MH_CreateHook (GetActiveWindow) failed");
+    }
+    else if (MH_EnableHook(activeTarget) != MH_OK) {
+        Log("MH_EnableHook (GetActiveWindow) failed");
+    }
+    else {
+        Log("GetActiveWindow hook installed successfully");
+    }
+
+    // --- XInput hooks, on their own thread since the DLL may not be
     //     loaded by the game yet at this point in startup ---
     CreateThread(NULL, 0, [](LPVOID) -> DWORD {
         SetupXInputHook();
@@ -143,16 +303,13 @@ void SetupInputHook() {
 // ============================================================
 
 DWORD WINAPI MainThread(LPVOID param) {
-    // setup the input hooks (XInput hook installs asynchronously)
     SetupInputHook();
 
-    // open a new shared file to communicate with the python script
     HANDLE pipe = CreateNamedPipeA(
         "\\\\.\\pipe\\bridge",
         PIPE_ACCESS_DUPLEX,
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
         1, 4096, 4096, 0, NULL);
-    // ensure the file was created
     if (pipe == INVALID_HANDLE_VALUE) {
         Log("Failed to create pipe, error: " + std::to_string(GetLastError()));
         return 1;
@@ -167,7 +324,6 @@ DWORD WINAPI MainThread(LPVOID param) {
             char buffer[256];
             DWORD bytesRead;
 
-            // read the last line of the file repeatedly for commands
             while (ReadFile(pipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
                 buffer[bytesRead] = '\0';
                 std::string command(buffer);
@@ -177,7 +333,6 @@ DWORD WINAPI MainThread(LPVOID param) {
                     response = BuildGameStateJson();
                 }
                 else if (command.rfind("set_key", 0) == 0) {
-                    // "set_key <hexVKey> <0|1>"
                     int vKey = 0; int down = 0;
                     sscanf_s(command.c_str(), "set_key %x %d", &vKey, &down);
                     if (vKey >= 0 && vKey < 256) {
@@ -190,10 +345,6 @@ DWORD WINAPI MainThread(LPVOID param) {
                     }
                 }
                 else if (command.rfind("set_joy", 0) == 0) {
-                    // "set_joy <joyIndex> <field> <value>"
-                    // field is one of: a, b, x, y, lb, rb, back, start,
-                    //                  lthumb, rthumb, dup, ddown, dleft, dright,
-                    //                  ltrigger, rtrigger, lx, ly
                     int joyIndex = -1;
                     char field[32] = { 0 };
                     int value = 0;

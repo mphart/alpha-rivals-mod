@@ -63,9 +63,9 @@ if __name__ == "__main__":
     print("state:", bridge.get_state())
 
     # Player 0 (joystick index 0): press attack, hold briefly, release
-    print(bridge.set_joy_button(0, "attack", True))
+    print(bridge.set_joy_button(0, "a", True))
     time.sleep(0.2)
-    print(bridge.set_joy_button(0, "attack", False))
+    print(bridge.set_joy_button(0, "a", False))
 
     # Player 0: move right
     print(bridge.set_joy_axis(0, "x", 65535))
@@ -73,6 +73,6 @@ if __name__ == "__main__":
     print(bridge.set_joy_axis(0, "x", 32767))  # back to center
 
     # Player 1 (joystick index 1), independent of player 0
-    print(bridge.set_joy_button(1, "jump", True))
+    print(bridge.set_joy_button(1, "y", True))
     time.sleep(0.2)
-    print(bridge.set_joy_button(1, "jump", False))
+    print(bridge.set_joy_button(1, "y", False))
