@@ -4,10 +4,16 @@ import time
 bridge = Bridge()
 
 
-VK_X = 0x58  # or whichever key you confirmed controls an action
-
-bridge.set_key(VK_X, False)
+bridge.set_joy_button(0, 'a', True)
 time.sleep(0.3)
-print(bridge.set_key(VK_X, True))
-time.sleep(3)
-print(bridge.set_key(VK_X, False))
+bridge.set_joy_button(0, 'a', False)
+time.sleep(0.3)
+bridge.set_joy_button(1, 'a', True)
+time.sleep(0.3)
+bridge.set_joy_button(1, 'a', False)
+time.sleep(2)
+bridge.set_joy_button(1, 'b', True)
+time.sleep(0.3)
+bridge.set_joy_button(1, 'b', False)
+time.sleep(0.3)
+bridge.set_joy_button(0, 'a', True)

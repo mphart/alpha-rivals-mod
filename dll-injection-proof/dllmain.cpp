@@ -82,11 +82,6 @@ SHORT WINAPI HookedGetAsyncKeyState(int vKey) {
 }
 
 SHORT WINAPI HookedGetKeyState(int vKey) {
-    if (g_overrideKeys[vKey] || (OriginalGetKeyState(vKey) & 0x8000)) {
-        Log("GetKeyState called: vKey=0x" + std::to_string(vKey) +
-            " override=" + std::to_string(g_overrideKeys[vKey]));
-    }
-
     if (vKey >= 0 && vKey < 256 && g_overrideKeys[vKey]) {
         return g_forcedKeyState[vKey] ? (SHORT)0x8000 : 0;
     }
@@ -117,6 +112,9 @@ bool g_logRealXInput = true;
 
 DWORD WINAPI HookedXInputGetState(DWORD dwUserIndex, XINPUT_STATE* pState) {
     DWORD result = OriginalXInputGetState(dwUserIndex, pState);
+
+    Log("XInputGetState called: index=" + std::to_string(dwUserIndex) +
+        " result=" + std::to_string(result));
 
     if (g_logRealXInput && result == ERROR_SUCCESS && pState->Gamepad.wButtons != 0) {
         std::stringstream hexStream;
