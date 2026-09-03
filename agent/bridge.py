@@ -50,10 +50,10 @@ class Bridge:
         return self.send(f"set_joy {joy_index} {axis} {value}")
 
     def release_all(self, joy_index: int) -> None:
-        for button in ("attack", "jump", "special", "shield", "strong"):
+        for button in ("a", "b", "x", "y", "lb"):
             self.set_joy_button(joy_index, button, False)
-        self.set_joy_axis(joy_index, "x", 32767)
-        self.set_joy_axis(joy_index, "y", 32767)
+        self.set_joy_axis(joy_index, "x", 0)
+        self.set_joy_axis(joy_index, "y", 0)
 
 
 if __name__ == "__main__":
