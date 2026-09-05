@@ -113,9 +113,6 @@ bool g_logRealXInput = true;
 DWORD WINAPI HookedXInputGetState(DWORD dwUserIndex, XINPUT_STATE* pState) {
     DWORD result = OriginalXInputGetState(dwUserIndex, pState);
 
-    Log("XInputGetState called: index=" + std::to_string(dwUserIndex) +
-        " result=" + std::to_string(result));
-
     if (g_logRealXInput && result == ERROR_SUCCESS && pState->Gamepad.wButtons != 0) {
         std::stringstream hexStream;
         hexStream << "0x" << std::hex << pState->Gamepad.wButtons;
@@ -217,6 +214,7 @@ void SetupXInputHook() {
 // ============================================================
 
 void SetupInputHook() {
+    return;
     if (MH_Initialize() != MH_OK) { Log("MH_Initialize failed"); return; }
 
     ResolveGameWindow();
@@ -384,21 +382,24 @@ DWORD WINAPI MainThread(LPVOID param) {
                         response = "error: invalid joystick index";
                     }
                 }
-                else if (command == "get_percent") {
-                    double percent1, percent2, percent3, percent4;
-                    percent1 = ReadPlayerPercent(0);
-                    percent2 = ReadPlayerPercent(1);
-                    percent3 = ReadPlayerPercent(2);
-                    percent4 = ReadPlayerPercent(3);
-                    response = std::to_string(percent1) + " " + std::to_string(percent2) + " " + std::to_string(percent3) + " " + std::to_string(percent4);
-                }
-                else if (command == "get_stock") {
-                    double stock1, stock2, stock3, stock4;
-                    stock1 = ReadPlayerStock(0);
-                    stock2 = ReadPlayerStock(1);
-                    stock3 = ReadPlayerStock(2);
-                    stock4 = ReadPlayerStock(3);
-                    response = std::to_string(stock1) + " " + std::to_string(stock2) + " " + std::to_string(stock3) + " " + std::to_string(stock4);
+                else if (command == "get_bases") {
+                    // Temporary debug command: dump resolved struct base
+                    // addresses in hex so they can be pasted directly into
+                    // Cheat Engine's Dissect Data/Structures tool.
+                    // Self-contained -- walks the chain directly rather
+                    // than assuming a resolver already exists elsewhere.
+                    uintptr_t addr = (uintptr_t)GetModuleHandleA("RivalsofAether.exe") + 0x05C4A8D8;
+                    addr = *(uintptr_t*)addr; addr += 0x2C;
+                    addr = *(uintptr_t*)addr; addr += 0x10;
+                    addr = *(uintptr_t*)addr; addr += 0x198;
+                    addr = *(uintptr_t*)addr; addr += 0x10;
+                    addr = *(uintptr_t*)addr; addr += 0x24;
+                    addr = *(uintptr_t*)addr; addr += 0xC;
+                    uintptr_t statsBase = *(uintptr_t*)addr;
+
+                    std::stringstream ss;
+                    ss << "statsBase=0x" << std::hex << statsBase;
+                    response = ss.str();
                 }
                 else {
                     response = "unknown command";
@@ -406,12 +407,11 @@ DWORD WINAPI MainThread(LPVOID param) {
 
                 WriteFile(pipe, response.c_str(), (DWORD)response.size(), NULL, NULL);
                 Log(response);
-            }
-            Log("Client disconnected.");
+            }               
         }
-        DisconnectNamedPipe(pipe);
+        Log("Client disconnected.");
     }
-
+    DisconnectNamedPipe(pipe);
     return 0;
 }
 

@@ -11,12 +11,15 @@ double ReadPlayerY(int player);
 //double ReadPlayerVelX(int player); not found yet
 //double ReadPlayerVelY(int player); not found yet
 double ReadPlayerAnim(int player);
+double ReadPlayerAnimSprite(int player);
 //double ReadPlayerFramesLeft(int player); not found yet
 double ReadPlayerCharacter(int player);
 double ReadPlayerTeam(int player);
 double ReadPlayerUsedAirDodge(int player);
 //double ReadPlayerJumpsLeft(int player); not found yet
-//double ReadPlayerIsInvulnerable(int player); not found yet, may be included in player anim
+
+// character-specific player state
+double ReadPlayerOnFire(int player);
 
 // environment state
 double ReadGameSpeed();
