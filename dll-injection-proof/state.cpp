@@ -99,6 +99,8 @@ double ReadPlayerAnimSprite(int player) {
     });
 }
 
+double ReadPlayerFramesLeft(int player) { return 0; }
+
 double ReadPlayerCharacter(int player) {
     //Log("ReadPlayerCharacter(" + std::to_string(player) + ")");
     return ReadPlayerValue(player, {
@@ -112,6 +114,8 @@ double ReadPlayerUsedAirDodge(int player) {
         0x05C4A8D8, 0x2C, 0x10, 0x210, 0x20, 0x48, 0x10, 0x24, 0xC, 0xE10
     });
 }
+
+double ReadPlayerJumpsLeft(int player) { return 0; }
 
 double ReadPlayerIsInvulnerable(int player) {
     //Log("ReadPlayerIsInvulnerable(" + std::to_string(player) + ")");
@@ -131,6 +135,12 @@ double ReadPlayerOnFire(int player) {
     //Log("ReadPlayerOnFire(" + std::to_string(player) + ")");
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x4B0, 0x10, 0x8, 0x10, 0x4, 0x4, 0xE10
+    });
+}
+
+double ReadPlayerCursorY(int player) {
+    return ReadPlayerValue(player, {
+        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1C10
     });
 }
 
@@ -154,6 +164,8 @@ double ReadGameClock() {
         0x05C4A8D8, 0x2C, 0x10, 0x288, 0xD50
     });
 }
+
+double ReadGameTeamsEnabled() { return 0; }
 
 typedef double(*ReadFuncNoArg)();
 typedef double(*ReadFuncIntArg)(int);
@@ -199,16 +211,20 @@ std::string BuildGameStateJson() {
             if (TryReadIntArg(ReadPlayerStock, p, v))          json << ",\"stock\":" << v;
             if (TryReadIntArg(ReadPlayerX, p, v))              json << ",\"x\":" << v;
             if (TryReadIntArg(ReadPlayerY, p, v))              json << ",\"y\":" << v;
+            if (TryReadIntArg(ReadPlayerVelX, p, v))           json << ",\"vel_x\":" << v;
+            if (TryReadIntArg(ReadPlayerVelY, p, v))           json << ",\"vel_y\":" << v;
             if (TryReadIntArg(ReadPlayerAnim, p, v))           json << ",\"anim\":" << v;
             if (TryReadIntArg(ReadPlayerAnimSprite, p, v))     json << ",\"anim_sprite\":" << v;
+            if (TryReadIntArg(ReadPlayerFramesLeft, p, v))     json << ",\"frames_left\":" << v;
             if (TryReadIntArg(ReadPlayerCharacter, p, v))      json << ",\"character\":" << v;
             if (TryReadIntArg(ReadPlayerTeam, p, v))           json << ",\"team\":" << v;
             if (TryReadIntArg(ReadPlayerUsedAirDodge, p, v))   json << ",\"used_air_dodge\":" << v;
+            if (TryReadIntArg(ReadPlayerJumpsLeft, p, v))      json << ",\"jumps_left\":" << v;
             if (TryReadIntArg(ReadPlayerDirection, p, v))      json << ",\"dir\":" << v;
             if (TryReadIntArg(ReadPlayerIsInvulnerable, p, v)) json << ",\"invuln\":" << v;
 
             // zetterburn
-            if (TryReadIntArg(ReadPlayerOnFire, p, v))          json << ",\"on_fire\":" << v;
+            if (TryReadIntArg(ReadPlayerOnFire, p, v))         json << ",\"on_fire\":" << v;
         }
         json << "}";
     }
@@ -226,9 +242,9 @@ std::string BuildGameStateJson() {
             first = false;
         }
     };
-    addField("speed", ReadGameSpeed);
     addField("stage", ReadGameStage);
     addField("clock", ReadGameClock);
+    addField("teams_enabled", ReadGameTeamsEnabled);
     json << "}";
 
     json << "}";

@@ -214,7 +214,6 @@ void SetupXInputHook() {
 // ============================================================
 
 void SetupInputHook() {
-    return;
     if (MH_Initialize() != MH_OK) { Log("MH_Initialize failed"); return; }
 
     ResolveGameWindow();
@@ -385,20 +384,48 @@ DWORD WINAPI MainThread(LPVOID param) {
                 else if (command == "get_bases") {
                     // Temporary debug command: dump resolved struct base
                     // addresses in hex so they can be pasted directly into
-                    // Cheat Engine's Dissect Data/Structures tool.
-                    // Self-contained -- walks the chain directly rather
-                    // than assuming a resolver already exists elsewhere.
-                    uintptr_t addr = (uintptr_t)GetModuleHandleA("RivalsofAether.exe") + 0x05C4A8D8;
-                    addr = *(uintptr_t*)addr; addr += 0x2C;
-                    addr = *(uintptr_t*)addr; addr += 0x10;
-                    addr = *(uintptr_t*)addr; addr += 0x198;
-                    addr = *(uintptr_t*)addr; addr += 0x10;
-                    addr = *(uintptr_t*)addr; addr += 0x24;
-                    addr = *(uintptr_t*)addr; addr += 0xC;
-                    uintptr_t statsBase = *(uintptr_t*)addr;
+                    // Cheat Engine's Dissect Data/Structures tool (or the
+                    // Lua bulk-add script). Self-contained -- walks each
+                    // chain directly rather than depending on state.cpp.
+                    uintptr_t moduleBase = (uintptr_t)GetModuleHandleA("RivalsofAether.exe");
+
+                    // --- statsBase (percent/stock/team live here, +0x10*player) ---
+                    uintptr_t statsAddr = moduleBase + 0x05C4A8D8;
+                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x2C;
+                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x10;
+                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x198;
+                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x10;
+                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x24;
+                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0xC;
+                    uintptr_t statsBase = *(uintptr_t*)statsAddr;
+
+                    // --- entityBase (x/y live here, +0x10*player) ---
+                    // Shared prefix with anim up through 0x78C, 0x20, 0x24,
+                    // then this branch takes 0xC instead of 0x4.
+                    uintptr_t entityAddr = moduleBase + 0x05C4A8D8;
+                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x2C;
+                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x10;
+                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x78C;
+                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x20;
+                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x24;
+                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0xC;
+                    uintptr_t entityBase = *(uintptr_t*)entityAddr;
+
+                    // --- animBase (anim lives here, +0x10*player) ---
+                    // Same prefix as entityBase, but branches at 0x4 instead of 0xC.
+                    uintptr_t animAddr = moduleBase + 0x05C4A8D8;
+                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x2C;
+                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x10;
+                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x78C;
+                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x20;
+                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x24;
+                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x4;
+                    uintptr_t animBase = *(uintptr_t*)animAddr;
 
                     std::stringstream ss;
-                    ss << "statsBase=0x" << std::hex << statsBase;
+                    ss << "statsBase=0x" << std::hex << statsBase
+                        << " entityBase=0x" << std::hex << entityBase
+                        << " animBase=0x" << std::hex << animBase;
                     response = ss.str();
                 }
                 else {
@@ -407,11 +434,13 @@ DWORD WINAPI MainThread(LPVOID param) {
 
                 WriteFile(pipe, response.c_str(), (DWORD)response.size(), NULL, NULL);
                 Log(response);
-            }               
+            }
+
+            Log("Client disconnected.");
         }
-        Log("Client disconnected.");
+        DisconnectNamedPipe(pipe);
     }
-    DisconnectNamedPipe(pipe);
+
     return 0;
 }
 

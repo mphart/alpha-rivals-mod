@@ -18,6 +18,17 @@ class Bridge:
             0, None, win32file.OPEN_EXISTING, 0, None
         )
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        if self.pipe:
+            win32file.CloseHandle(self.pipe)
+            self.pipe = None
+        
     def send(self, command: str) -> str:
         win32file.WriteFile(self.pipe, command.encode())
         result = win32file.ReadFile(self.pipe, 4096)
@@ -35,6 +46,7 @@ class Bridge:
     def get_stock(self) -> list[float]:
         raw = self.send("get_stock")
         return [float(x) for x in raw.split()]
+    
 
     # ---- Keyboard input ----
     def set_key(self, vkey: int, down: bool) -> str:
