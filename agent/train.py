@@ -1,19 +1,12 @@
 """
 PPO training entry point for the RoA environment.
-
-Prerequisites:
-    pip install stable-baselines3 gymnasium
+Uses self-play to train a single agent against a static opponent.
 
 Usage:
-    1. Launch Rivals of Aether, inject the DLL (as you've been doing).
-    2. Get into a match manually (vs CPU, player 1 = your XInput-controlled
-       slot) since match_reset() in roa_env.py is currently a stub.
-    3. Run this script.
-
-This currently trains a single agent (player 1) against RoA's built-in
-CPU opponent (player 2), rather than self-play, to keep the setup simple
-while validating the sparse reward signal. Self-play can be layered on
-later once this loop is confirmed to learn *something*.
+    1. launch Rivals of Aether
+    2. attach alpha-rivals-mod
+    3. join a match with two controllers, then get to the post-game screen
+    4. run this script
 """
 
 from stable_baselines3 import PPO
@@ -24,10 +17,9 @@ from env import RoAEnv
 
 # Set this to a checkpoint path (e.g. "./checkpoints/ppo_roa_20000_steps.zip")
 # to resume training from it. Leave as None to start fresh.
-RESUME_FROM_CHECKPOINT = None
+RESUME_FROM_CHECKPOINT = './checkpoints/selfplay_zetter_1v1_150000_steps.zip'
 
 TOTAL_TIMESTEPS = 1_000_000
-FPS = 30
 
 
 def main():
@@ -40,23 +32,23 @@ def main():
         model = PPO(
             policy="MlpPolicy",
             env=env,
-            n_steps=2048,           # rollout length before each PPO update
-            batch_size=256,
+            n_steps=2000,           # rollout length before each PPO update
+            batch_size=250,
             n_epochs=10,
-            gamma=0.9999,            # discount factor
+            gamma=0.99,             # discount factor
             gae_lambda=0.95,
             clip_range=0.2,
             ent_coef=0.01,         
             learning_rate=3e-4,
-            policy_kwargs=dict(net_arch=[512, 512, 512, 512, 512, 512, 512, 512]),  # matches our earlier sizing discussion
+            policy_kwargs=dict(net_arch=[256, 256, 256]),  # matches our earlier sizing discussion
             verbose=1,
-            tensorboard_log="./ppo_roa_tensorboard/",
+            tensorboard_log="./selfplay_roa_tensorboard/",
         )
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=25000,
+        save_freq=25_000,
         save_path="./checkpoints/",
-        name_prefix="ppo_zetter_1v1",
+        name_prefix="selfplay_zetter_1v1",
     )
 
     model.learn(
@@ -66,7 +58,7 @@ def main():
         reset_num_timesteps=(RESUME_FROM_CHECKPOINT is None),
     )
 
-    model.save("ppo_roa_final")
+    model.save("selfplay_roa_zetter_1v1_v1")
 
 
 if __name__ == "__main__":

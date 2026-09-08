@@ -5,20 +5,18 @@ Match restart macro for RoA.
 import time
 from bridge import Bridge
 
-# Which joystick index sends menu confirms (usually your controlled player)
-MENU_JOY_INDEX = 0
-
 CHARACTER_SELECT_STAGE_ID = 989
 
 class MatchMacro:
-    def __init__(self, bridge: Bridge, joy_index: int = MENU_JOY_INDEX):
+    def __init__(self, bridge: Bridge):
         self.bridge = bridge
-        self.joy_index = joy_index
 
     def _press(self, field: str, hold_seconds: float, wait_after: float):
-        self.bridge.set_joy_button(self.joy_index, field, True)
+        self.bridge.set_joy_button(0, field, True)
+        self.bridge.set_joy_button(1, field, True)
         time.sleep(hold_seconds)
-        self.bridge.set_joy_button(self.joy_index, field, False)
+        self.bridge.set_joy_button(0, field, False)
+        self.bridge.set_joy_button(1, field, False)
         time.sleep(wait_after)
 
     def tap_direction(self, field: str, times: int, hold_seconds: float, gap_seconds: float):
@@ -29,9 +27,11 @@ class MatchMacro:
         than holding continuously.
         """
         for _ in range(times):
-            self.bridge.set_joy_button(self.joy_index, field, True)
+            self.bridge.set_joy_button(0, field, True)
+            self.bridge.set_joy_button(1, field, True)
             time.sleep(hold_seconds)
-            self.bridge.set_joy_button(self.joy_index, field, False)
+            self.bridge.set_joy_button(0, field, False)
+            self.bridge.set_joy_button(1, field, False)
             time.sleep(gap_seconds)
 
     def wait_for_match_start(self, self_index: int, opponent_index: int,
