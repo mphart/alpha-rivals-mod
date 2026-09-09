@@ -1,22 +1,92 @@
 """
-Bridge client for talking to the injected RoA payload over the named pipe.
-
-Usage examples are in __main__ at the bottom -- run this file directly for a
-quick manual test, or import `Bridge` from your training script.
+Bridge client for talking to an injected RoA payload over the named pipe.
 """
 
 import json
+import os
+import re
 import time
 import win32file
+import pywintypes
+
+
+PIPE_DIR = r'\\.\pipe'
+PIPE_PREFIX = 'bridge_'
+PIPE_NAME_RE = re.compile(r'^bridge_\d+$')
+
+ERROR_PIPE_BUSY = 231
+
+
+def _find_and_claim_pipe() -> tuple[str, object]:
+    """
+    Enumerate named pipes matching bridge_<pid>, and attempt to connect to
+    each in turn, claiming the first one that isn't already in use by
+    another Bridge instance. Connecting is attempted immediately per
+    candidate (rather than listing first, connecting separately) to avoid
+    a race where another process claims a pipe between listing and
+    connecting.
+    """
+    try:
+        names = os.listdir(PIPE_DIR)
+    except OSError as e:
+        raise RuntimeError(f"Could not enumerate named pipes: {e}") from e
+
+    candidates = [n for n in names if PIPE_NAME_RE.match(n)]
+    if not candidates:
+        raise RuntimeError(
+            f"No named pipes found matching '{PIPE_PREFIX}<pid>' under {PIPE_DIR}. "
+            "Is the DLL injected into at least one running game instance?"
+        )
+
+    last_error = None
+    for name in candidates:
+        full_path = f"{PIPE_DIR}\\{name}"
+        try:
+            handle = win32file.CreateFile(
+                full_path,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0, None, win32file.OPEN_EXISTING, 0, None
+            )
+            return full_path, handle
+        except pywintypes.error as e:
+            last_error = e
+            # 231 = ERROR_PIPE_BUSY -- another Bridge already claimed this
+            # instance (nMaxInstances=1 server-side). Try the next candidate.
+            continue
+
+    raise RuntimeError(
+        f"Found {len(candidates)} candidate pipe(s) matching '{PIPE_PREFIX}<pid>', "
+        f"but could not connect to any of them (all busy, or another error). "
+        f"Last error: {last_error}"
+    )
 
 
 class Bridge:
-    def __init__(self, pipe_name: str = r'\\.\pipe\bridge'):
-        self.pipe = win32file.CreateFile(
-            pipe_name,
-            win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-            0, None, win32file.OPEN_EXISTING, 0, None
-        )
+    def __init__(self, pipe_name: str | None = None, pid: int | None = None):
+        """
+        Three ways to connect:
+          - Bridge(pid=1234)          -> connect to a specific known instance
+          - Bridge(pipe_name=r'...')  -> connect to an exact pipe path
+          - Bridge()                  -> auto-discover and claim the first
+                                         available bridge_<pid> pipe
+        """
+        if pid is not None:
+            full_path = f"{PIPE_DIR}\\{PIPE_PREFIX}{pid}"
+            self.pipe = win32file.CreateFile(
+                full_path,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0, None, win32file.OPEN_EXISTING, 0, None
+            )
+            self.pipe_name = full_path
+        elif pipe_name is not None:
+            self.pipe = win32file.CreateFile(
+                pipe_name,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0, None, win32file.OPEN_EXISTING, 0, None
+            )
+            self.pipe_name = pipe_name
+        else:
+            self.pipe_name, self.pipe = _find_and_claim_pipe()
 
     def __enter__(self):
         return self
@@ -28,7 +98,7 @@ class Bridge:
         if self.pipe:
             win32file.CloseHandle(self.pipe)
             self.pipe = None
-        
+
     def send(self, command: str) -> str:
         win32file.WriteFile(self.pipe, command.encode())
         result = win32file.ReadFile(self.pipe, 4096)
@@ -46,7 +116,6 @@ class Bridge:
     def get_stock(self) -> list[float]:
         raw = self.send("get_stock")
         return [float(x) for x in raw.split()]
-    
 
     # ---- Keyboard input ----
     def set_key(self, vkey: int, down: bool) -> str:
@@ -62,29 +131,21 @@ class Bridge:
         return self.send(f"set_joy {joy_index} {axis} {value}")
 
     def release_all(self, joy_index: int) -> None:
-        for button in ("a", "b", "x", "y", "lb"):
+        for button in ("a", "b", "x", "y", "lb", "dup"):
             self.set_joy_button(joy_index, button, False)
         self.set_joy_axis(joy_index, "x", 0)
         self.set_joy_axis(joy_index, "y", 0)
 
 
 if __name__ == "__main__":
-    bridge = Bridge()
+    # Auto-discovers and claims two DIFFERENT available instances (assuming
+    # two games are running with the DLL injected) -- the second Bridge()
+    # call will skip whichever pipe the first one already claimed, since
+    # that pipe is now busy from the OS's perspective.
+    bridge1 = Bridge()
+    print("bridge1 connected to:", bridge1.pipe_name)
+    print(bridge1.get_state())
 
-    # Quick sanity check
-    print("state:", bridge.get_state())
-
-    # Player 0 (joystick index 0): press attack, hold briefly, release
-    print(bridge.set_joy_button(0, "a", True))
-    time.sleep(0.2)
-    print(bridge.set_joy_button(0, "a", False))
-
-    # Player 0: move right
-    print(bridge.set_joy_axis(0, "x", 65535))
-    time.sleep(0.5)
-    print(bridge.set_joy_axis(0, "x", 32767))  # back to center
-
-    # Player 1 (joystick index 1), independent of player 0
-    print(bridge.set_joy_button(1, "y", True))
-    time.sleep(0.2)
-    print(bridge.set_joy_button(1, "y", False))
+    bridge2 = Bridge()
+    print("bridge2 connected to:", bridge2.pipe_name)
+    print(bridge2.get_state())

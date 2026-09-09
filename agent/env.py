@@ -61,7 +61,7 @@ class RoAEnv(gym.Env):
         # Continuous: one entry per stick axis (value between -1.0 and 1.0)
         self.action_space = spaces.Box(
             low=np.concatenate([
-                np.zeros(len(BUTTON_FIELDS), dtype=np.float32),
+                np.full(len(BUTTON_FIELDS), -1.0, dtype=np.float32),
                 np.full(len(STICK_FIELDS), -1.0, dtype=np.float32),
             ]),
             high=np.concatenate([
@@ -157,7 +157,7 @@ class RoAEnv(gym.Env):
         prev = self._prev_buttons_held[player_index]
 
         for i, field in enumerate(BUTTON_FIELDS):
-            down = bool(action[i] >= 0.5)
+            down = bool(action[i] > 0)
             if down != prev[field]:
                 self.bridge.set_joy_button(player_index, field, down)
                 prev[field] = down
@@ -218,6 +218,10 @@ class RoAEnv(gym.Env):
 
         print("[RoAEnv] no compatible opponent checkpoint found; opponent will idle")
         return None
+    
+    def _normalize(self, value: float, min: float, max: float) -> float:
+        # normalize the value to range [-1, 1]
+        return 2 * (value - min) / (max - min) - 1
 
     def _state_to_obs(self, state: dict, player_index: int) -> np.ndarray:
         values = []
@@ -228,35 +232,36 @@ class RoAEnv(gym.Env):
                 p = players[i]
                 values.extend([
                     1.0, # on
-                    float(p.get("percent", 0.0)),
-                    float(p.get("stock", 0.0)),
-                    float(p.get("x", 0.0)),
-                    float(p.get("y", 0.0)),
-                    float(p.get("vel_x", 0.0)),
-                    float(p.get("vel_y", 0.0)),
-                    float(p.get("anim", 0.0)),
-                    float(p.get("anim_sprite", 0.0)),
-                    float(p.get("frames_left", 0.0)),
-                    float(p.get("character", 0.0)),
-                    float(p.get("team", 0.0)),
-                    float(p.get("used_air_dodge", 0.0)),
-                    float(p.get("jumps_left", 0.0)),
-                    float(p.get("on_fire", 0.0)),
-                    float(p.get("dir", 0.0)),
-                    float(p.get("invuln", 0.0)),
+                    _normalize(float(p.get("percent", 0.0)), 0.0, 999.0),
+                    _normalize(float(p.get("stock", 0.0)), 0.0, 99.0),
+                    _normalize(float(p.get("x", 0.0)), -100.0, 1500.0),
+                    _normalize(float(p.get("y", 0.0)), -100.0, 1500.0),
+                    _normalize(float(p.get("vel_x", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("vel_y", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("anim", 0.0)), 53.0, 200.0),
+                    _normalize(float(p.get("anim_sprite", 0.0)), 0.0, 25.0),
+                    _normalize(float(p.get("frames_left", 0.0)), 0.0, 60.0),
+                    _normalize(float(p.get("character", 0.0)), 0.0, 100.0),
+                    _normalize(float(p.get("team", 0.0)), 0.0, 2.0),
+                    _normalize(float(p.get("used_air_dodge", 0.0)), 0.0, 1.0),
+                    _normalize(float(p.get("used_wall_jump", 0.0)), 0.0, 1.0),
+                    _normalize(float(p.get("jumps_left", 0.0)), 0.0, 1.0),
+                    _normalize(float(p.get("on_fire", 0.0)), 0.0, 1.0),
+                    _normalize(float(p.get("dir", 0.0)), -1.0, 1.0),
+                    _normalize(float(p.get("invuln", 0.0)), 9.0, 300.0),
                 ])
             else:
                 values.extend([0.0] * self.values_per_player)
 
         game = state.get("game", {})
-        stage = game.get("stage", 938) - 939 # stage id of the first stage
+        stage = game.get("stage", 939)
         clock = game.get("clock", 0.0)
         teams_enabled = game.get("teams_enabled", 0.0)
         values.extend([
-            float(player_index),
-            float(stage),
-            float(clock),
-            float(teams_enabled),
+            _normalize(float(player_index), 0.0, 4.0),
+            _normalize(float(stage), 939.0, 1200.0),
+            _normalize(float(clock), 0.0, 360_000.0),
+            _normalize(float(teams_enabled), 0.0, 1.0), 
         ])
 
         return np.array(values, dtype=np.float32)

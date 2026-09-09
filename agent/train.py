@@ -17,7 +17,7 @@ from env import RoAEnv
 
 # Set this to a checkpoint path (e.g. "./checkpoints/ppo_roa_20000_steps.zip")
 # to resume training from it. Leave as None to start fresh.
-RESUME_FROM_CHECKPOINT = './checkpoints/selfplay_zetter_1v1_150000_steps.zip'
+RESUME_FROM_CHECKPOINT = './checkpoints/selfplay_zetter_1v1_225000_steps.zip'
 
 TOTAL_TIMESTEPS = 1_000_000
 

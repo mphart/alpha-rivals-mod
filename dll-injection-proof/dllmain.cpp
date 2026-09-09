@@ -300,8 +300,14 @@ void SetupInputHook() {
 DWORD WINAPI MainThread(LPVOID param) {
     SetupInputHook();
 
+    // Unique pipe name per process, so multiple simultaneously-injected
+    // game instances don't collide on the same named pipe.
+    DWORD myPid = GetCurrentProcessId();
+    std::string pipeName = "\\\\.\\pipe\\bridge_" + std::to_string(myPid);
+    Log("Using pipe name: " + pipeName);
+
     HANDLE pipe = CreateNamedPipeA(
-        "\\\\.\\pipe\\bridge",
+        pipeName.c_str(),
         PIPE_ACCESS_DUPLEX,
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
         1, 4096, 4096, 0, NULL);
