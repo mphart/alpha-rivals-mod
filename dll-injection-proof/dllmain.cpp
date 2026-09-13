@@ -214,6 +214,7 @@ void SetupXInputHook() {
 // ============================================================
 
 void SetupInputHook() {
+    return;
     if (MH_Initialize() != MH_OK) { Log("MH_Initialize failed"); return; }
 
     ResolveGameWindow();
@@ -301,7 +302,9 @@ DWORD WINAPI MainThread(LPVOID param) {
     SetupInputHook();
 
     // Unique pipe name per process, so multiple simultaneously-injected
-    // game instances don't collide on the same named pipe.
+    // game instances don't collide on the same named pipe. Each instance
+    // derives its own name from its own PID -- no coordination with the
+    // injector needed.
     DWORD myPid = GetCurrentProcessId();
     std::string pipeName = "\\\\.\\pipe\\bridge_" + std::to_string(myPid);
     Log("Using pipe name: " + pipeName);
@@ -434,6 +437,49 @@ DWORD WINAPI MainThread(LPVOID param) {
                         << " animBase=0x" << std::hex << animBase;
                     response = ss.str();
                 }
+                else if (command == "list_instances") {
+                    // Walk the room's active-instance linked list and report
+                    // each live instance's address + object_index, so we can
+                    // identify which numeric IDs correspond to players,
+                    // projectiles, etc.
+                    //
+                    // Run_Room is at VA 0x06066758 (Ghidra, image base 0x400000),
+                    // so the module-relative offset is 0x05C66758 -- not
+                    // 0x01C66758 (that lands in .text and reads as a null head).
+                    uintptr_t moduleBase = (uintptr_t)GetModuleHandleA("RivalsofAether.exe");
+                    uintptr_t runRoom = *(uintptr_t*)(moduleBase + 0x05C66758);
+                    uintptr_t current = runRoom ? *(uintptr_t*)(runRoom + 0x80) : 0;
+
+                    std::stringstream ss;
+                    ss << "{\"run_room\":\"0x" << std::hex << runRoom
+                        << "\",\"head\":\"0x" << current << std::dec
+                        << "\",\"instances\":[";
+                    bool first = true;
+                    int count = 0;
+                    const int MAX_INSTANCES = 500; // safety cap
+
+                    while (current != 0 && count < MAX_INSTANCES) {
+                        uint32_t flags = *(uint32_t*)(current + 0x74);
+                        if ((flags & 0x3) == 0) {
+                            int32_t objectIndex = *(int32_t*)(current + 0x7C);
+                            int32_t spriteIndex = *(int32_t*)(current + 0x80);
+
+                            if (!first) ss << ",";
+                            first = false;
+                            ss << "{\"addr\":\"0x" << std::hex << current << std::dec << "\""
+                                << ",\"object_index\":" << objectIndex
+                                << ",\"sprite_index\":" << spriteIndex << "}";
+
+                            if (objectIndex == 5) {
+                                Log("Player found at 0x" + std::hex + current);
+                            }
+                        }
+                        current = *(uintptr_t*)(current + 0x130);
+                        count++;
+                    }
+                    ss << "]}";
+                    response = ss.str();
+                }
                 else {
                     response = "unknown command";
                 }
@@ -444,6 +490,7 @@ DWORD WINAPI MainThread(LPVOID param) {
 
             Log("Client disconnected.");
         }
+
         DisconnectNamedPipe(pipe);
     }
 

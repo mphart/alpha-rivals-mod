@@ -113,6 +113,10 @@ class MatchMacro:
         # wait for match
         return self.wait_for_match_start(self_index, opponent_index)
 
+    def quit_match(self) -> bool:
+        self._press("start", 0.05, 1)
+        self._tap_direction("ddown", 3, 0.05, 0.15)
+
 
 def test_macro():
     bridge = Bridge()
