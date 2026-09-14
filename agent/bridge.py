@@ -140,11 +140,18 @@ class Bridge:
         # with 32767 as center is the typical Windows joystick convention.
         return self.send(f"set_joy {joy_index} {axis} {value}")
 
+    def set_joy_override(self, joy_index: int, enabled: bool) -> str:
+        return self.send(f"set_joy_override {joy_index} {1 if enabled else 0}")
+
     def release_all(self, joy_index: int) -> None:
         for button in ("a", "b", "x", "y", "lb", "dup"):
             self.set_joy_button(joy_index, button, False)
         self.set_joy_axis(joy_index, "lx", 0)
         self.set_joy_axis(joy_index, "ly", 0)
+
+    def release_joy(self, joy_index: int) -> None:
+        self.release_all(joy_index)
+        self.set_joy_override(joy_index, False)
 
 
 if __name__ == "__main__":

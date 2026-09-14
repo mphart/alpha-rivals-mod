@@ -93,29 +93,45 @@ class MatchMacro:
         print("[MatchMacro] TIMED OUT waiting for match start.")
         return False
 
+    def _claim_menu_pads(self):
+        self.bridge.set_joy_override(0, True)
+        self.bridge.set_joy_override(1, True)
+
+    def _release_menu_pads(self):
+        self.bridge.release_joy(0)
+        self.bridge.release_joy(1)
+
     def restart_match(self, self_index: int = 0, opponent_index: int = 1) -> bool:
-        # post-match screen
-        self._press("a", 0.05, 1)
-        self._press("a", 0.05, 1)
-        time.sleep(3)
+        self._claim_menu_pads()
+        try:
+            # post-match screen
+            self._press("a", 0.05, 1)
+            self._press("a", 0.05, 1)
+            time.sleep(3)
 
-        # character select screen
-        self.tap_direction("ddown", 3, 0.05, 0.15)
-        time.sleep(0.5)
+            # character select screen
+            self.tap_direction("ddown", 3, 0.05, 0.15)
+            time.sleep(0.5)
 
-        # map select screen
-        self._press("a", 0.05, 1)
-        self.tap_direction("dup", 6, 0.05, 0.15)
-        time.sleep(0.5)
-        self._press("a", 0.05, 1)
-        time.sleep(0.5)
+            # map select screen
+            self._press("a", 0.05, 1)
+            self.tap_direction("dup", 6, 0.05, 0.15)
+            time.sleep(0.5)
+            self._press("a", 0.05, 1)
+            time.sleep(0.5)
 
-        # wait for match
-        return self.wait_for_match_start(self_index, opponent_index)
+            # wait for match
+            return self.wait_for_match_start(self_index, opponent_index)
+        finally:
+            self._release_menu_pads()
 
     def quit_match(self) -> bool:
-        self._press("start", 0.05, 1)
-        self.tap_direction("ddown", 3, 0.05, 0.15)
+        self._claim_menu_pads()
+        try:
+            self._press("start", 0.05, 1)
+            self.tap_direction("ddown", 3, 0.05, 0.15)
+        finally:
+            self._release_menu_pads()
 
 
 def test_macro():
