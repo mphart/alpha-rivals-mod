@@ -4,8 +4,12 @@
 #include "util.h"
 #include "minhook.h"
 #include <Xinput.h>   // XINPUT_STATE, XINPUT_CAPABILITIES, button bit constants
+#include <dbt.h>      // DBT_DEVNODES_CHANGED for gamepad rediscovery
 #include <sstream>    // for hex formatting in log lines
 #include <cstring>
+
+// Runner stores the main HWND here (VA 0x060662F4).
+static const uintptr_t kMainWindowRva = 0x05C662F4;
 
 // Custom GML instance vars live at slot 100000 + index (0x186A0).
 static const int kGmlInstanceVarBase = 0x186A0;
@@ -262,24 +266,24 @@ static void AppendInstanceVarsJson(std::stringstream& ss, uintptr_t moduleBase, 
 // Game window resolution (needed for focus-hook spoofing below)
 // ============================================================
 
-HWND g_gameWindowHandle = nullptr;
+// HWND g_gameWindowHandle = nullptr;
 
-void ResolveGameWindow() {
-    DWORD myPid = GetCurrentProcessId();
-    g_gameWindowHandle = nullptr;
+// void ResolveGameWindow() {
+//     DWORD myPid = GetCurrentProcessId();
+//     g_gameWindowHandle = nullptr;
 
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        DWORD pid;
-        GetWindowThreadProcessId(hwnd, &pid);
-        if (pid == GetCurrentProcessId() && IsWindowVisible(hwnd)) {
-            g_gameWindowHandle = hwnd;
-            return FALSE; // stop enumerating, found it
-        }
-        return TRUE;
-        }, 0);
+//     EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+//         DWORD pid;
+//         GetWindowThreadProcessId(hwnd, &pid);
+//         if (pid == GetCurrentProcessId() && IsWindowVisible(hwnd)) {
+//             g_gameWindowHandle = hwnd;
+//             return FALSE; // stop enumerating, found it
+//         }
+//         return TRUE;
+//         }, 0);
 
-    Log("Resolved game window handle: " + std::to_string((uintptr_t)g_gameWindowHandle));
-}
+//     Log("Resolved game window handle: " + std::to_string((uintptr_t)g_gameWindowHandle));
+// }
 
 // ============================================================
 // Focus hooks (GetFocus / GetForegroundWindow / GetActiveWindow)
@@ -289,56 +293,29 @@ void ResolveGameWindow() {
 // regardless of which window Windows actually considers active -- this
 // lets input injection work even while the game runs in the background.
 
-typedef HWND(WINAPI* GetFocus_t)();
-GetFocus_t OriginalGetFocus = nullptr;
+// typedef HWND(WINAPI* GetFocus_t)();
+// GetFocus_t OriginalGetFocus = nullptr;
 
-HWND WINAPI HookedGetFocus() {
-    if (g_gameWindowHandle) return g_gameWindowHandle;
-    return OriginalGetFocus();
-}
+// HWND WINAPI HookedGetFocus() {
+//     if (g_gameWindowHandle) return g_gameWindowHandle;
+//     return OriginalGetFocus();
+// }
 
-typedef HWND(WINAPI* GetForegroundWindow_t)();
-GetForegroundWindow_t OriginalGetForegroundWindow = nullptr;
+// typedef HWND(WINAPI* GetForegroundWindow_t)();
+// GetForegroundWindow_t OriginalGetForegroundWindow = nullptr;
 
-HWND WINAPI HookedGetForegroundWindow() {
-    if (g_gameWindowHandle) return g_gameWindowHandle;
-    return OriginalGetForegroundWindow();
-}
+// HWND WINAPI HookedGetForegroundWindow() {
+//     if (g_gameWindowHandle) return g_gameWindowHandle;
+//     return OriginalGetForegroundWindow();
+// }
 
-typedef HWND(WINAPI* GetActiveWindow_t)();
-GetActiveWindow_t OriginalGetActiveWindow = nullptr;
+// typedef HWND(WINAPI* GetActiveWindow_t)();
+// GetActiveWindow_t OriginalGetActiveWindow = nullptr;
 
-HWND WINAPI HookedGetActiveWindow() {
-    if (g_gameWindowHandle) return g_gameWindowHandle;
-    return OriginalGetActiveWindow();
-}
-
-// ============================================================
-// Keyboard hooks (GetAsyncKeyState + GetKeyState)
-// ============================================================
-
-typedef SHORT(WINAPI* GetAsyncKeyState_t)(int vKey);
-GetAsyncKeyState_t OriginalGetAsyncKeyState = nullptr;
-
-typedef SHORT(WINAPI* GetKeyState_t)(int vKey);
-GetKeyState_t OriginalGetKeyState = nullptr;
-
-volatile bool g_overrideKeys[256] = { false };
-volatile bool g_forcedKeyState[256] = { false };
-
-SHORT WINAPI HookedGetAsyncKeyState(int vKey) {
-    if (vKey >= 0 && vKey < 256 && g_overrideKeys[vKey]) {
-        return g_forcedKeyState[vKey] ? (SHORT)0x8000 : 0;
-    }
-    return OriginalGetAsyncKeyState(vKey);
-}
-
-SHORT WINAPI HookedGetKeyState(int vKey) {
-    if (vKey >= 0 && vKey < 256 && g_overrideKeys[vKey]) {
-        return g_forcedKeyState[vKey] ? (SHORT)0x8000 : 0;
-    }
-    return OriginalGetKeyState(vKey);
-}
+// HWND WINAPI HookedGetActiveWindow() {
+//     if (g_gameWindowHandle) return g_gameWindowHandle;
+//     return OriginalGetActiveWindow();
+// }
 
 // ============================================================
 // XInput hooks (XInputGetState + XInputGetCapabilities)
@@ -350,7 +327,6 @@ XInputGetState_t OriginalXInputGetState = nullptr;
 typedef DWORD(WINAPI* XInputGetCapabilities_t)(DWORD dwUserIndex, DWORD dwFlags, XINPUT_CAPABILITIES* pCapabilities);
 XInputGetCapabilities_t OriginalXInputGetCapabilities = nullptr;
 
-const int NUM_CONTROLLED_JOYSTICKS = 2;
 const int MAX_JOYSTICKS = 4;
 
 volatile bool  g_overrideJoystick[MAX_JOYSTICKS] = { false };
@@ -360,7 +336,62 @@ volatile SHORT g_forcedThumbLY[MAX_JOYSTICKS] = { 0 };
 volatile BYTE  g_forcedLeftTrigger[MAX_JOYSTICKS] = { 0 };
 volatile BYTE  g_forcedRightTrigger[MAX_JOYSTICKS] = { 0 };
 
+// Kept for the set_key pipe command; keyboard hooks are currently disabled.
+volatile bool g_overrideKeys[256] = { false };
+volatile bool g_forcedKeyState[256] = { false };
+
 bool g_logRealXInput = true;
+
+static void ClearForcedJoystick(int joyIndex) {
+    if (joyIndex < 0 || joyIndex >= MAX_JOYSTICKS) return;
+    g_forcedButtons[joyIndex] = 0;
+    g_forcedThumbLX[joyIndex] = 0;
+    g_forcedThumbLY[joyIndex] = 0;
+    g_forcedLeftTrigger[joyIndex] = 0;
+    g_forcedRightTrigger[joyIndex] = 0;
+}
+
+// SEH helper kept free of C++ objects (C2712).
+static HWND SafeReadMainWindowHwnd(HMODULE game) {
+    HWND hwnd = nullptr;
+    __try {
+        hwnd = *(HWND*)((uintptr_t)game + kMainWindowRva);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        hwnd = nullptr;
+    }
+    return hwnd;
+}
+
+// GameMaker only rescans XInput slots 0-3 on init / WM_DEVICECHANGE.
+// After claiming virtual pads via the hooks, poke that path so disconnected
+// slots get GetState again and flip their connected flags.
+static void NotifyGamepadRescan() {
+    HWND hwnd = nullptr;
+    HMODULE game = GetModuleHandleA("RivalsofAether.exe");
+    if (game) {
+        hwnd = SafeReadMainWindowHwnd(game);
+    }
+    if (!hwnd || !IsWindow(hwnd)) {
+        Log("NotifyGamepadRescan: no valid game HWND");
+        return;
+    }
+    if (PostMessageW(hwnd, WM_DEVICECHANGE, DBT_DEVNODES_CHANGED, 0)) {
+        Log("Posted WM_DEVICECHANGE to trigger pad rediscovery");
+    }
+    else {
+        Log("PostMessage WM_DEVICECHANGE failed");
+    }
+}
+
+static void ClaimJoystickOverride(int joyIndex) {
+    if (joyIndex < 0 || joyIndex >= MAX_JOYSTICKS) return;
+    const bool wasClaimed = g_overrideJoystick[joyIndex];
+    g_overrideJoystick[joyIndex] = true;
+    if (!wasClaimed) {
+        NotifyGamepadRescan();
+    }
+}
 
 DWORD WINAPI HookedXInputGetState(DWORD dwUserIndex, XINPUT_STATE* pState) {
     DWORD result = OriginalXInputGetState(dwUserIndex, pState);
@@ -455,10 +486,7 @@ void SetupXInputHook() {
         Log("XInputGetCapabilities hook installed successfully");
     }
 
-    for (int i = 0; i < NUM_CONTROLLED_JOYSTICKS; ++i) {
-        g_overrideJoystick[i] = true;
-    }
-    Log("Marked joystick indices 0.." + std::to_string(NUM_CONTROLLED_JOYSTICKS - 1) + " as present");
+    Log("XInput passthrough by default; claim pads with set_joy_override");
 }
 
 // ============================================================
@@ -468,74 +496,9 @@ void SetupXInputHook() {
 void SetupInputHook() {
     if (MH_Initialize() != MH_OK) { Log("MH_Initialize failed"); return; }
 
-    ResolveGameWindow();
-
-    HMODULE user32 = GetModuleHandleA("user32.dll");
-
-    // --- GetAsyncKeyState ---
-    void* asyncKeyTarget = GetProcAddress(user32, "GetAsyncKeyState");
-    if (MH_CreateHook(asyncKeyTarget, &HookedGetAsyncKeyState,
-        (void**)&OriginalGetAsyncKeyState) != MH_OK) {
-        Log("MH_CreateHook (GetAsyncKeyState) failed");
-    }
-    else if (MH_EnableHook(asyncKeyTarget) != MH_OK) {
-        Log("MH_EnableHook (GetAsyncKeyState) failed");
-    }
-    else {
-        Log("GetAsyncKeyState hook installed successfully");
-    }
-
-    // --- GetKeyState (confirmed to be the function RoA actually polls) ---
-    void* keyStateTarget = GetProcAddress(user32, "GetKeyState");
-    if (MH_CreateHook(keyStateTarget, &HookedGetKeyState,
-        (void**)&OriginalGetKeyState) != MH_OK) {
-        Log("MH_CreateHook (GetKeyState) failed");
-    }
-    else if (MH_EnableHook(keyStateTarget) != MH_OK) {
-        Log("MH_EnableHook (GetKeyState) failed");
-    }
-    else {
-        Log("GetKeyState hook installed successfully");
-    }
-
-    // --- GetFocus ---
-    void* focusTarget = GetProcAddress(user32, "GetFocus");
-    if (MH_CreateHook(focusTarget, &HookedGetFocus,
-        (void**)&OriginalGetFocus) != MH_OK) {
-        Log("MH_CreateHook (GetFocus) failed");
-    }
-    else if (MH_EnableHook(focusTarget) != MH_OK) {
-        Log("MH_EnableHook (GetFocus) failed");
-    }
-    else {
-        Log("GetFocus hook installed successfully");
-    }
-
-    // --- GetForegroundWindow ---
-    void* fgTarget = GetProcAddress(user32, "GetForegroundWindow");
-    if (MH_CreateHook(fgTarget, &HookedGetForegroundWindow,
-        (void**)&OriginalGetForegroundWindow) != MH_OK) {
-        Log("MH_CreateHook (GetForegroundWindow) failed");
-    }
-    else if (MH_EnableHook(fgTarget) != MH_OK) {
-        Log("MH_EnableHook (GetForegroundWindow) failed");
-    }
-    else {
-        Log("GetForegroundWindow hook installed successfully");
-    }
-
-    // --- GetActiveWindow ---
-    void* activeTarget = GetProcAddress(user32, "GetActiveWindow");
-    if (MH_CreateHook(activeTarget, &HookedGetActiveWindow,
-        (void**)&OriginalGetActiveWindow) != MH_OK) {
-        Log("MH_CreateHook (GetActiveWindow) failed");
-    }
-    else if (MH_EnableHook(activeTarget) != MH_OK) {
-        Log("MH_EnableHook (GetActiveWindow) failed");
-    }
-    else {
-        Log("GetActiveWindow hook installed successfully");
-    }
+    // ResolveGameWindow();
+    // Focus hooks (GetFocus / GetForegroundWindow / GetActiveWindow) are
+    // currently disabled; reinstate with the declarations above if needed.
 
     // --- XInput hooks, on their own thread since the DLL may not be
     //     loaded by the game yet at this point in startup ---
@@ -632,6 +595,24 @@ DWORD WINAPI MainThread(LPVOID param) {
                         response = "error: invalid vKey";
                     }
                 }
+                else if (command.rfind("set_joy_override", 0) == 0) {
+                    int joyIndex = -1;
+                    int enabled = 0;
+                    sscanf_s(command.c_str(), "set_joy_override %d %d", &joyIndex, &enabled);
+                    if (joyIndex >= 0 && joyIndex < MAX_JOYSTICKS) {
+                        if (enabled) {
+                            ClaimJoystickOverride(joyIndex);
+                        }
+                        else {
+                            g_overrideJoystick[joyIndex] = false;
+                            ClearForcedJoystick(joyIndex);
+                        }
+                        response = "ok";
+                    }
+                    else {
+                        response = "error: invalid joystick index";
+                    }
+                }
                 else if (command.rfind("set_joy", 0) == 0) {
                     int joyIndex = -1;
                     char field[32] = { 0 };
@@ -640,7 +621,7 @@ DWORD WINAPI MainThread(LPVOID param) {
                         &joyIndex, field, (unsigned)_countof(field), &value);
 
                     if (joyIndex >= 0 && joyIndex < MAX_JOYSTICKS) {
-                        g_overrideJoystick[joyIndex] = true;
+                        ClaimJoystickOverride(joyIndex);
                         std::string f(field);
 
                         auto setButtonBit = [&](WORD bit) {
@@ -673,53 +654,6 @@ DWORD WINAPI MainThread(LPVOID param) {
                     else {
                         response = "error: invalid joystick index";
                     }
-                }
-                else if (command == "get_bases") {
-                    // Temporary debug command: dump resolved struct base
-                    // addresses in hex so they can be pasted directly into
-                    // Cheat Engine's Dissect Data/Structures tool (or the
-                    // Lua bulk-add script). Self-contained -- walks each
-                    // chain directly rather than depending on state.cpp.
-                    uintptr_t moduleBase = (uintptr_t)GetModuleHandleA("RivalsofAether.exe");
-
-                    // --- statsBase (percent/stock/team live here, +0x10*player) ---
-                    uintptr_t statsAddr = moduleBase + 0x05C4A8D8;
-                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x2C;
-                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x10;
-                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x198;
-                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x10;
-                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0x24;
-                    statsAddr = *(uintptr_t*)statsAddr; statsAddr += 0xC;
-                    uintptr_t statsBase = *(uintptr_t*)statsAddr;
-
-                    // --- entityBase (x/y live here, +0x10*player) ---
-                    // Shared prefix with anim up through 0x78C, 0x20, 0x24,
-                    // then this branch takes 0xC instead of 0x4.
-                    uintptr_t entityAddr = moduleBase + 0x05C4A8D8;
-                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x2C;
-                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x10;
-                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x78C;
-                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x20;
-                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0x24;
-                    entityAddr = *(uintptr_t*)entityAddr; entityAddr += 0xC;
-                    uintptr_t entityBase = *(uintptr_t*)entityAddr;
-
-                    // --- animBase (anim lives here, +0x10*player) ---
-                    // Same prefix as entityBase, but branches at 0x4 instead of 0xC.
-                    uintptr_t animAddr = moduleBase + 0x05C4A8D8;
-                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x2C;
-                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x10;
-                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x78C;
-                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x20;
-                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x24;
-                    animAddr = *(uintptr_t*)animAddr; animAddr += 0x4;
-                    uintptr_t animBase = *(uintptr_t*)animAddr;
-
-                    std::stringstream ss;
-                    ss << "statsBase=0x" << std::hex << statsBase
-                        << " entityBase=0x" << std::hex << entityBase
-                        << " animBase=0x" << std::hex << animBase;
-                    response = ss.str();
                 }
                 else if (command == "list_instances") {
                     // Walk the room's active-instance linked list.
@@ -864,7 +798,6 @@ DWORD WINAPI MainThread(LPVOID param) {
 
         DisconnectNamedPipe(pipe);
     }
-
     return 0;
 }
 

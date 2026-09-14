@@ -128,7 +128,7 @@ class RoAEnv(gym.Env):
         self.self_player_index = int(self.np_random.integers(0, 2))
         self.opponent_player_index = 1 - self.self_player_index
 
-        self._release_all_buttons()
+        self._release_all_joysticks()
         self.reset_manager.reset()
 
         # get the initial state
@@ -139,6 +139,7 @@ class RoAEnv(gym.Env):
 
         # try to load a new opponent model
         self.opponent_model = self._load_static_opponent(self.step_offset)
+        self._sync_joy_overrides()
 
         info = {}
         return obs, info
@@ -176,7 +177,7 @@ class RoAEnv(gym.Env):
 
     def close(self):
         try:
-            self._release_all_buttons()
+            self._release_all_joysticks()
         except Exception:
             pass
         self.bridge.close()
@@ -189,6 +190,7 @@ class RoAEnv(gym.Env):
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         num_buttons = len(BUTTON_FIELDS)
         prev = self._prev_buttons_held[player_index]
+        self.bridge.set_joy_override(player_index, True)
 
         for i, field in enumerate(BUTTON_FIELDS):
             down = bool(action[i] > 0)
@@ -201,14 +203,26 @@ class RoAEnv(gym.Env):
             value = int(round(raw * STICK_MAX))
             self.bridge.set_joy_axis(player_index, field, value)
 
-    def _release_all_buttons(self):
+    def _controlled_joy_indexes(self):
+        indexes = {self.self_player_index}
+        if self.opponent_model is not None:
+            indexes.add(self.opponent_player_index)
+        return indexes
+
+    def _sync_joy_overrides(self):
+        claimed = self._controlled_joy_indexes()
+        for player_index in (0, 1):
+            if player_index in claimed:
+                self.bridge.set_joy_override(player_index, True)
+            else:
+                self.bridge.release_joy(player_index)
+
+    def _release_all_joysticks(self):
         for player_index in (0, 1):
             prev = self._prev_buttons_held[player_index]
             for field in BUTTON_FIELDS:
-                self.bridge.set_joy_button(player_index, field, False)
                 prev[field] = False
-            for field in STICK_FIELDS:
-                self.bridge.set_joy_axis(player_index, field, 0)
+            self.bridge.release_joy(player_index)
 
     def _load_static_opponent(self, step_offset: int):
         if step_offset <= 0:
