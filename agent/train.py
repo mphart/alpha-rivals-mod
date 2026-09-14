@@ -20,11 +20,11 @@ from env import RoAEnv
 
 # Set this to a checkpoint path (e.g. "./checkpoints/ppo_roa_20000_steps")
 # to resume training from it. Leave as None to start fresh.
-RESUME_FROM_CHECKPOINT =  './checkpoints/selfplay_zetter_1v1_1811301_steps.zip'
+RESUME_FROM_CHECKPOINT =  None
 
-TOTAL_TIMESTEPS = 10_000_000
+TOTAL_TIMESTEPS = 100_000_000
 N_ENVS = 4  # one subprocess per injected game instance
-CHECKPOINT_EVERY = 30_000  # timesteps between checkpoint files
+CHECKPOINT_EVERY = 50_000  # timesteps between checkpoint files
 
 
 def main():
@@ -50,7 +50,7 @@ def main():
             clip_range=0.2,
             ent_coef=0.01,         
             learning_rate=3e-4,
-            policy_kwargs=dict(net_arch=[256, 256, 256, 256]),  # matches our earlier sizing discussion
+            policy_kwargs=dict(net_arch=[512, 256, 256, 256, 256]), 
             verbose=1,
             tensorboard_log="./selfplay_roa_tensorboard/",
         )
@@ -59,7 +59,7 @@ def main():
     checkpoint_callback = CheckpointCallback(
         save_freq=max(CHECKPOINT_EVERY // N_ENVS, 1),
         save_path="./checkpoints/",
-        name_prefix="selfplay_zetter_1v1",
+        name_prefix="selfplay_zetter_orcane_1v1",
     )
 
     model.learn(
@@ -69,7 +69,7 @@ def main():
         reset_num_timesteps=(RESUME_FROM_CHECKPOINT is None),
     )
 
-    model.save("selfplay_roa_zetter_1v1_v1")
+    model.save("selfplay_zetter_orcane_1v1")
 
 
 if __name__ == "__main__":

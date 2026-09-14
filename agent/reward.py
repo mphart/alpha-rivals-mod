@@ -86,8 +86,10 @@ class RewardManager():
         ):
             if curr_self_stock > curr_opponent_stock:
                 reward += self.self_win_reward
+                print("Self win, reward: ", reward)
             elif curr_opponent_stock > curr_self_stock:
                 reward += self.opponent_win_reward
+                print("Opponent win, reward: ", reward)
             terminated = True
 
         return reward, terminated

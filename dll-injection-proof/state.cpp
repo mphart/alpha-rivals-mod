@@ -42,7 +42,7 @@ double WritePlayerValue(int player, double val, std::initializer_list<uintptr_t>
     uintptr_t base = GetModuleBase("RivalsofAether.exe");
     uintptr_t addr = FollowOffsetChain(base, offsets);
     addr += 0x10 * player;
-    *addr = val;
+    *(double*)addr = val;
     return val;
 }
 
@@ -71,17 +71,29 @@ double ReadPlayerTeam(int player) {
     });
 }
 
-double ReadPlayerCharacter(int player) {
-    //Log("ReadPlayerCharacter(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x20, 0x28, 0x10, 0x28, 0x20, 0x24, 0x4, 0x10
-    });
-}
-
 double ReadPlayerCursorY(int player) {
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1C10
     });
+}
+
+double WritePlayerOn(int player, double val) {
+    return WritePlayerValue(player, val, {
+        0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x0, 0x4, 0x4, 0x310
+        });
+}
+
+
+double WritePlayerPercent(int player, double val) {
+    return WritePlayerValue(player, val, {
+        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1510
+        });
+}
+
+double WritePlayerStock(int player, double val) {
+    return WritePlayerValue(player, val, {
+        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1710
+        });
 }
 
 double ReadGameSpeed() {
@@ -105,24 +117,6 @@ double ReadGameClock() {
     });
 }
 
-double WritePlayerOn(int player, double val) {
-    return WritePlayerValue(player, val, {
-        0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x0, 0x4, 0x4, 0x310
-    });
-}
-
-double WritePlayerPercent(int player, double val) {
-    return WritePlayerValue(player, val, {
-        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1510
-    });
-}
-
-double WritePlayerStock(int player, double val) {
-    return WritePlayerValue(player, val, {
-        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1710
-    });
-}
-
 double ReadGameTeamsEnabled() { return 0; }
 
 // --- oPlayer instance vars (CInstance hashmap / packed RValue array) ---
@@ -133,9 +127,15 @@ static const uintptr_t kRunRoomRva = 0x05C66758;
 static const int kOPlayerObjectIndex = 3;
 static const int kPHitBoxObjectIndex = 6;
 static const int kPBurnBoxObjectIndex = 17;
+static const int kBubbleObjectIndex = 11;
+static const int kPuddleObjectIndex = 13;
+static const int kCssPlayerBgObjectIndex = 219;
+static const int kCssPlayerPackedSlot = 0x1275; // set to 1..4 by local_charselect_room
 static const int kMaxRoomInstances = 500;
 static const int kMaxProjectiles = 64;
 static const int kMaxGroundFires = 64;
+static const int kMaxBubbles = 64;
+static const int kMaxPuddles = 64;
 
 enum OPlayerField {
     kUrl = 0,
@@ -231,6 +231,9 @@ static double* OPlayerFieldPtr(OPlayerState* st, int field) {
 
 // GMS RValue kinds we treat as numbers:
 // 0=real, 7=int32, 10=int64, 13=bool. state/player/track_player are often int32.
+static uintptr_t RoomListHead();
+static bool ReadInstanceXY(uintptr_t instance, float* x, float* y);
+
 static bool ReadRValueNumber(uintptr_t rv, double* out) {
     if (!rv || !out) return false;
     __try {
@@ -253,6 +256,162 @@ static bool ReadRValueNumber(uintptr_t rv, double* out) {
     __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+
+static bool WriteRValueNumber(uintptr_t rv, double val) {
+    if (!rv) return false;
+    __try {
+        uint32_t kind = *(uint32_t*)(rv + 0xC) & 0xFFFFFFu;
+        switch (kind) {
+        case 0:  // real
+        case 13: // bool
+            *(double*)rv = val;
+            return true;
+        case 7:  // int32
+            *(uint32_t*)rv = (uint32_t)(int32_t)val;
+            return true;
+        case 10: // int64
+            *(int64_t*)rv = (int64_t)val;
+            return true;
+        default:
+            // Kind 1 is a YYString. Overwriting that pointer crashes.
+            return false;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Hashmap-only: packed slots exist for every index, so they can't mark a var as present.
+static uintptr_t FindHashmapVarRValue(uintptr_t instance, int index) {
+    if (!instance || index < 0) return 0;
+    uintptr_t found = 0;
+    __try {
+        uintptr_t map = *(uintptr_t*)(instance + 0x2C);
+        if (!map) return 0;
+        int cap = *(int*)map;
+        uintptr_t entries = *(uintptr_t*)(map + 0x10);
+        if (!entries || cap <= 0 || cap > 65536) return 0;
+        for (int i = 0; i < cap; ++i) {
+            uintptr_t e = entries + static_cast<uintptr_t>(i) * 12;
+            if ((int32_t)*(uint32_t*)(e + 8) <= 0) continue;
+            if ((int32_t)*(uint32_t*)(e + 4) != index) continue;
+            found = *(uintptr_t*)e;
+            break;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    return found;
+}
+
+static uintptr_t FindPackedVarRValue(uintptr_t instance, int index) {
+    if (!instance || index < 0) return 0;
+    uintptr_t rv = 0;
+    __try {
+        uintptr_t packed = *(uintptr_t*)(instance + 0x4);
+        if (!packed) return 0;
+        rv = packed + static_cast<uintptr_t>(index) * 16;
+        (void)*(uint32_t*)(rv + 0xC);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    return rv;
+}
+
+static uintptr_t FindInstanceVarRValue(uintptr_t instance, int index) {
+    uintptr_t rv = FindHashmapVarRValue(instance, index);
+    if (rv) return rv;
+    return FindPackedVarRValue(instance, index);
+}
+
+static int g_cssUrlIndex = -2;
+static int g_cssPlayerIndex = -2;
+static int g_cssCursorIndex = -2;
+static int g_cssDrawIndex = -2;
+static int g_cssNameWidthIndex = -2;
+
+static int CssSlotFromInstance(uintptr_t instance) {
+    int slot = -1;
+    double playerVal = 0;
+    uintptr_t packedPlayer = FindPackedVarRValue(instance, kCssPlayerPackedSlot);
+    if (packedPlayer && ReadRValueNumber(packedPlayer, &playerVal)) {
+        int p = (int)playerVal;
+        if (p >= 1 && p <= 4) return p - 1;
+    }
+    if (g_cssPlayerIndex >= 0) {
+        uintptr_t playerRv = FindHashmapVarRValue(instance, g_cssPlayerIndex);
+        if (playerRv && ReadRValueNumber(playerRv, &playerVal)) {
+            int p = (int)playerVal;
+            if (p >= 1 && p <= 4) return p - 1;
+        }
+    }
+    float x = 0, y = 0;
+    if (ReadInstanceXY(instance, &x, &y)) {
+        int fromX = (int)((x + 100.0f) / 238.0f);
+        if (fromX >= 0 && fromX <= 3) slot = fromX;
+    }
+    return slot;
+}
+
+static void EnsureCssFieldIndices() {
+    if (g_cssUrlIndex < 0)
+        g_cssUrlIndex = FindCustomVarIndex("url");
+    if (g_cssPlayerIndex < 0)
+        g_cssPlayerIndex = FindCustomVarIndex("player");
+    if (g_cssCursorIndex < 0)
+        g_cssCursorIndex = FindCustomVarIndex("cursor_id");
+    if (g_cssDrawIndex < 0)
+        g_cssDrawIndex = FindCustomVarIndex("draw_index");
+    if (g_cssNameWidthIndex < 0)
+        g_cssNameWidthIndex = FindCustomVarIndex("name_width");
+}
+
+// CSS portraits are cs_playerbg_obj (object_index 219), one instance per slot.
+static uintptr_t FindPlayerChoiceRValue(int player) {
+    if (player < 0 || player > 3) return 0;
+    EnsureCssFieldIndices();
+
+    uintptr_t found = 0;
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            int32_t objectIndex = *(int32_t*)(current + 0x7C);
+            if ((flags & 0x3) == 0 && objectIndex == kCssPlayerBgObjectIndex) {
+                if (CssSlotFromInstance(current) == player) {
+                    if (g_cssUrlIndex >= 0)
+                        found = FindHashmapVarRValue(current, g_cssUrlIndex);
+                    if (found) break;
+                }
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    return found;
+}
+
+double ReadPlayerChoice(int player) {
+    if (player < 0 || player > 3) { throw std::invalid_argument("player must be between 0 and 3"); }
+    double val = 0;
+    uintptr_t rv = FindPlayerChoiceRValue(player);
+    if (!rv || !ReadRValueNumber(rv, &val)) return 0;
+    return val;
+}
+
+double WritePlayerChoice(int player, double val) {
+    if (player < 0 || player > 3) { throw std::invalid_argument("player must be between 0 and 3"); }
+    uintptr_t rv = FindPlayerChoiceRValue(player);
+    if (!rv || !WriteRValueNumber(rv, val)) return 0;
+    return val;
 }
 
 enum ProjField {
@@ -395,6 +554,61 @@ static bool ReadGroundFireFromInstance(uintptr_t instance, GroundFireState* out)
     return true;
 }
 
+enum BubbleField {
+    kBubbleHsp = 0,
+    kBubbleVsp,
+    kBubblePlayer,
+    kBubbleFieldCount
+};
+
+static const char* kBubbleFieldNames[kBubbleFieldCount] = {
+    "hsp", "vsp", "player"
+};
+
+static int g_bubbleFieldIndex[kBubbleFieldCount];
+static bool g_bubbleFieldIndexReady = false;
+
+static void EnsureBubbleFieldIndices() {
+    if (g_bubbleFieldIndexReady) return;
+    for (int i = 0; i < kBubbleFieldCount; ++i)
+        g_bubbleFieldIndex[i] = FindCustomVarIndex(kBubbleFieldNames[i]);
+    g_bubbleFieldIndexReady = true;
+}
+
+static bool ReadBubbleFromInstance(uintptr_t instance, BubbleState* out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    EnsureBubbleFieldIndices();
+    if (!ReadInstanceXY(instance, &out->x, &out->y)) return false;
+
+    double values[kBubbleFieldCount];
+    if (!ReadCustomVars(instance, g_bubbleFieldIndex, kBubbleFieldCount, values, &out->have))
+        return false;
+
+    out->hsp = values[kBubbleHsp];
+    out->vsp = values[kBubbleVsp];
+    out->player = values[kBubblePlayer];
+    out->valid = true;
+    return true;
+}
+
+static bool ReadPuddleFromInstance(uintptr_t instance, PuddleState* out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!ReadInstanceXY(instance, &out->x, &out->y)) return false;
+
+    int playerIndex = PlayerVarIndex();
+    double playerVal = 0;
+    uint32_t have = 0;
+    if (playerIndex >= 0)
+        ReadCustomVars(instance, &playerIndex, 1, &playerVal, &have);
+
+    out->player = playerVal;
+    out->have = have;
+    out->valid = true;
+    return true;
+}
+
 static uintptr_t RoomListHead() {
     uintptr_t current = 0;
     __try {
@@ -490,6 +704,52 @@ int ReadGroundFireInstances(GroundFireState* out, int maxCount) {
     return n;
 }
 
+int ReadBubbleInstances(BubbleState* out, int maxCount) {
+    if (!out || maxCount <= 0) return 0;
+    int n = 0;
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances && n < maxCount) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0 &&
+                *(int32_t*)(current + 0x7C) == kBubbleObjectIndex) {
+                if (ReadBubbleFromInstance(current, &out[n]))
+                    n++;
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return n;
+    }
+    return n;
+}
+
+int ReadPuddleInstances(PuddleState* out, int maxCount) {
+    if (!out || maxCount <= 0) return 0;
+    int n = 0;
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances && n < maxCount) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0 &&
+                *(int32_t*)(current + 0x7C) == kPuddleObjectIndex) {
+                if (ReadPuddleFromInstance(current, &out[n]))
+                    n++;
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return n;
+    }
+    return n;
+}
+
 typedef double(*ReadFuncNoArg)();
 typedef double(*ReadFuncIntArg)(int);
 
@@ -567,6 +827,9 @@ std::string BuildGameStateJson() {
                 addInst(kBurnTimer, "burn_timer", inst.burn_timer);
                 addInst(kPlayer, "player", inst.player);
             }
+            else if (TryReadIntArg(ReadPlayerChoice, p, v)) {
+                json << ",\"url\":" << v;
+            }
         }
         json << "}";
     }
@@ -595,6 +858,32 @@ std::string BuildGameStateJson() {
         const GroundFireState& fire = ground[i];
         json << "{\"x\":" << fire.x << ",\"y\":" << fire.y;
         if (fire.have & 1u) json << ",\"player\":" << fire.player;
+        json << "}";
+    }
+    json << "],";
+
+    BubbleState bubbles[kMaxBubbles];
+    int nBubbles = ReadBubbleInstances(bubbles, kMaxBubbles);
+    json << "\"bubbles\":[";
+    for (int i = 0; i < nBubbles; ++i) {
+        if (i > 0) json << ",";
+        const BubbleState& bubble = bubbles[i];
+        json << "{\"x\":" << bubble.x << ",\"y\":" << bubble.y;
+        if (bubble.have & (1u << kBubbleHsp)) json << ",\"hsp\":" << bubble.hsp;
+        if (bubble.have & (1u << kBubbleVsp)) json << ",\"vsp\":" << bubble.vsp;
+        if (bubble.have & (1u << kBubblePlayer)) json << ",\"player\":" << bubble.player;
+        json << "}";
+    }
+    json << "],";
+
+    PuddleState puddles[kMaxPuddles];
+    int nPuddles = ReadPuddleInstances(puddles, kMaxPuddles);
+    json << "\"puddles\":[";
+    for (int i = 0; i < nPuddles; ++i) {
+        if (i > 0) json << ",";
+        const PuddleState& puddle = puddles[i];
+        json << "{\"x\":" << puddle.x << ",\"y\":" << puddle.y;
+        if (puddle.have & 1u) json << ",\"player\":" << puddle.player;
         json << "}";
     }
     json << "],";

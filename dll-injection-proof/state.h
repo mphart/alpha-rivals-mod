@@ -58,13 +58,36 @@ struct GroundFireState {
 int ReadProjectileInstances(ProjectileState* out, int maxCount);
 int ReadGroundFireInstances(GroundFireState* out, int maxCount);
 
+struct BubbleState {
+    bool valid;
+    float x;
+    float y;
+    double hsp;
+    double vsp;
+    double player;
+    uint32_t have;
+};
+
+struct PuddleState {
+    bool valid;
+    float x;
+    float y;
+    double player;
+    uint32_t have;
+};
+
+int ReadBubbleInstances(BubbleState* out, int maxCount);
+int ReadPuddleInstances(PuddleState* out, int maxCount);
+
 // player state (0 <= player < 4)
 double ReadPlayerOn(int player);
+double ReadPlayerChoice(int player);
 double ReadPlayerPercent(int player);
 double ReadPlayerStock(int player);
 double ReadPlayerCursorY(int player);
 
 double WritePlayerOn(int player, double val);
+double WritePlayerChoice(int player, double val);
 double WritePlayerPercent(int player, double val);
 double WritePlayerStock(int player, double val);
 

@@ -43,7 +43,7 @@ class RoAEnv(gym.Env):
         opponent_player_index: int = 1,
         step_duration: float = 1.0 / FPS,  # how long an action is held, seconds (game is 60 fps, so 1/30 is 30 fps)
         max_episode_steps: int = 100 * 60 * FPS,   # 100 minutes of game time at FPS steps/sec
-        step_offset: int = 25_000,  # checkpoint save interval; used to weight opponent sampling
+        step_offset: int = 50_000,  # checkpoint save interval; used to weight opponent sampling
     ):
         super().__init__()
 
@@ -88,7 +88,20 @@ class RoAEnv(gym.Env):
         self.num_ground_fire_slots = 6
         self.values_per_ground_fire = 3
 
-        obs_dim = self.num_player_slots * self.values_per_player + self.num_projectile_slots * self.values_per_projectile + self.num_ground_fire_slots * self.values_per_ground_fire + self.num_game_values
+        self.num_bubble_slots = 60
+        self.values_per_bubble = 5
+
+        self.num_puddle_slots = 60
+        self.values_per_puddle = 3
+
+        obs_dim = (
+            self.num_player_slots * self.values_per_player
+            + self.num_projectile_slots * self.values_per_projectile
+            + self.num_ground_fire_slots * self.values_per_ground_fire
+            + self.num_bubble_slots * self.values_per_bubble
+            + self.num_puddle_slots * self.values_per_puddle
+            + self.num_game_values
+        )
         self.observation_space = spaces.Box(
             low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32
         )
@@ -131,15 +144,18 @@ class RoAEnv(gym.Env):
         return obs, info
 
     def step(self, action):
-        # model
-        self._apply_action(action, self.self_player_index)
 
-        # opponent (frozen snapshot; idle if no compatible checkpoint)
+        # get opponent action
+        action_opponent = None
         if self.opponent_model is not None:
             obs_opponent = self._state_to_obs(self.prev_state, self.opponent_player_index)
             action_opponent, _ = self.opponent_model.predict(
-                obs_opponent, deterministic=False
+                obs_opponent, deterministic=True
             )
+
+        # apply actions
+        self._apply_action(action, self.self_player_index)
+        if action_opponent is not None:
             self._apply_action(action_opponent, self.opponent_player_index)
 
         # Hold the action for a fixed slice of real time
@@ -198,7 +214,7 @@ class RoAEnv(gym.Env):
         if step_offset <= 0:
             raise ValueError(f"step_offset must be positive, got {step_offset}")
 
-        weighted = [(None, 10.0)]  # idle opponent
+        weighted = [(None, 2.0)]  # idle opponent
         if CHECKPOINT_DIR.is_dir():
             for path in CHECKPOINT_DIR.glob("*.zip"):
                 match = CHECKPOINT_STEPS_RE.search(path.name)
@@ -254,7 +270,7 @@ class RoAEnv(gym.Env):
                     _normalize(float(p.get("stock", 0.0)), 0.0, 99.0),
                     _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
                     _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("url", 0.0)), 1.0, 19.0),
+                    _normalize(float(p.get("url", 0.0)), 0.0, 19.0),
                     _normalize(float(p.get("state", 0.0)), 0.0, 350.0),
                     _normalize(float(p.get("state_timer", 0.0)), 0.0, 350.0),
                     _normalize(float(p.get("prev_state", 0.0)), 0.0, 350.0),
@@ -304,6 +320,32 @@ class RoAEnv(gym.Env):
                 ])
             else:
                 values.extend([0.0] * self.values_per_ground_fire)
+
+        bubbles = state.get("bubbles", [])
+        for i in range(self.num_bubble_slots):
+            if i < len(bubbles):
+                p = bubbles[i]
+                values.extend([
+                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("hsp", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("vsp", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
+                ])
+            else:
+                values.extend([0.0] * self.values_per_bubble)
+
+        puddles = state.get("puddles", [])
+        for i in range(self.num_puddle_slots):
+            if i < len(puddles):
+                p = puddles[i]
+                values.extend([
+                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
+                ])
+            else:
+                values.extend([0.0] * self.values_per_puddle)
 
         game = state.get("game", {})
         stage = game.get("stage", 939)

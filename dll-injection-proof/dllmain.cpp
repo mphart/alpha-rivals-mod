@@ -228,6 +228,34 @@ static void AppendInstanceVarsJson(std::stringstream& ss, uintptr_t moduleBase, 
 
     ss << "]";
     if (emitted >= kMax) ss << ",\"truncated\":true";
+
+    static const int kPackedSlots[] = { 0x9f, 0xd12, 0x2c5, 0x5b2, 0x5be, 0x14f5, 0x1275 };
+    ss << ",\"packed_slots\":[";
+    bool pfirst = true;
+    if (packed) {
+        for (int slot : kPackedSlots) {
+            uintptr_t rv = packed + static_cast<uintptr_t>(slot) * 16;
+            uint32_t kindRaw = 0;
+            if (!SafeRead32(rv + 0xC, &kindRaw)) continue;
+            uint32_t kind = kindRaw & 0xFFFFFFu;
+            double v = 0;
+            if (kind == 0 || kind == 13) {
+                if (!SafeReadDouble(rv, &v)) continue;
+            }
+            else if (kind == 7) {
+                uint32_t raw = 0;
+                if (!SafeRead32(rv, &raw)) continue;
+                v = (int32_t)raw;
+            }
+            else {
+                continue;
+            }
+            if (!pfirst) ss << ",";
+            pfirst = false;
+            ss << "{\"i\":" << slot << ",\"kind\":" << kind << ",\"v\":" << v << "}";
+        }
+    }
+    ss << "]";
 }
 
 // ============================================================
@@ -560,22 +588,37 @@ DWORD WINAPI MainThread(LPVOID param) {
                     response = BuildGameStateJson();
                 }
                 else if (command.rfind("set_player_stock", 0) == 0) {
-                    int player;
-                    int val;
+                    int player = 0;
+                    int val = 0;
                     sscanf_s(command.c_str(), "set_player_stock %d %d", &player, &val);
-                    response = WritePlayerStock(player, static_cast<double>(val));
+                    response = std::to_string(WritePlayerStock(player, static_cast<double>(val)));
                 }
                 else if (command.rfind("set_player_percent", 0) == 0) {
-                    int player;
-                    int val;
+                    int player = 0;
+                    int val = 0;
                     sscanf_s(command.c_str(), "set_player_percent %d %d", &player, &val);
-                    response = WritePlayerPercent(player, static_cast<double>(val));
+                    response = std::to_string(WritePlayerPercent(player, static_cast<double>(val)));
+                }
+                else if (command.rfind("get_player_choice", 0) == 0) {
+                    int player = 0;
+                    sscanf_s(command.c_str(), "get_player_choice %d", &player);
+                    response = std::to_string(ReadPlayerChoice(player));
+                }
+                else if (command.rfind("set_player_choice", 0) == 0) {
+                    int player = 0;
+                    int val = 0;
+                    sscanf_s(command.c_str(), "set_player_choice %d %d", &player, &val);
+                    double written = WritePlayerChoice(player, static_cast<double>(val));
+                    if (written == 0.0 && val != 0)
+                        response = "error: css url not found for player " + std::to_string(player);
+                    else
+                        response = std::to_string(written);
                 }
                 else if (command.rfind("set_player_on", 0) == 0) {
-                    int player;
-                    int val;
+                    int player = 0;
+                    int val = 0;
                     sscanf_s(command.c_str(), "set_player_on %d %d", &player, &val);
-                    response = WritePlayerOn(player, static_cast<double>(val));
+                    response = std::to_string(WritePlayerOn(player, static_cast<double>(val)));
                 }
                 else if (command.rfind("set_key", 0) == 0) {
                     int vKey = 0; int down = 0;
@@ -738,9 +781,39 @@ DWORD WINAPI MainThread(LPVOID param) {
                     ss << "]}";
                     response = ss.str();
                 }
+                else if (command == "dump_css") {
+                    uintptr_t moduleBase = (uintptr_t)GetModuleHandleA("RivalsofAether.exe");
+                    uintptr_t runRoom = *(uintptr_t*)(moduleBase + 0x05C66758);
+                    uintptr_t current = runRoom ? *(uintptr_t*)(runRoom + 0x80) : 0;
+
+                    std::stringstream ss;
+                    ss << "{\"boxes\":[";
+                    bool first = true;
+                    int scanned = 0;
+                    const int MAX_INSTANCES = 500;
+                    while (current != 0 && scanned < MAX_INSTANCES) {
+                        uint32_t flags = *(uint32_t*)(current + 0x74);
+                        int32_t objectIndex = *(int32_t*)(current + 0x7C);
+                        if ((flags & 0x3) == 0 && objectIndex == 219) {
+                            if (!first) ss << ",";
+                            first = false;
+                            ss << "{\"addr\":\"0x" << std::hex << current << std::dec << "\""
+                                << ",\"id\":" << *(int32_t*)(current + 0x78)
+                                << ",\"x\":" << *(float*)(current + 0xA0)
+                                << ",\"y\":" << *(float*)(current + 0xA4)
+                                << ",";
+                            AppendInstanceVarsJson(ss, moduleBase, current);
+                            ss << "}";
+                        }
+                        current = *(uintptr_t*)(current + 0x130);
+                        scanned++;
+                    }
+                    ss << "]}";
+                    response = ss.str();
+                }
                 else if (command.rfind("dump_vars", 0) == 0) {
                     // First live instance of object_index (default 3 = oPlayer).
-                    int objectIndex = 17;
+                    int objectIndex = 382;
                     sscanf_s(command.c_str(), "dump_vars %d", &objectIndex);
 
                     uintptr_t moduleBase = (uintptr_t)GetModuleHandleA("RivalsofAether.exe");
@@ -780,8 +853,8 @@ DWORD WINAPI MainThread(LPVOID param) {
                 }
 
                 WriteFile(pipe, response.c_str(), (DWORD)response.size(), NULL, NULL);
-                if (command.rfind("dump_vars", 0) == 0)
-                    Log("dump_vars bytes=" + std::to_string(response.size()));
+                if (command.rfind("dump_vars", 0) == 0 || command == "dump_css")
+                    Log(command + " bytes=" + std::to_string(response.size()));
                 else
                     Log(response);
             }
