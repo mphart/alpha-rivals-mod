@@ -7,6 +7,7 @@ import os
 import re
 import time
 import win32file
+import win32pipe
 import pywintypes
 
 
@@ -15,6 +16,18 @@ PIPE_PREFIX = 'bridge_'
 PIPE_NAME_RE = re.compile(r'^bridge_\d+$')
 
 ERROR_PIPE_BUSY = 231
+CLAIM_ATTEMPTS = 40
+CLAIM_DELAY_SECONDS = 0.25
+
+
+def _connect_pipe(full_path: str):
+    handle = win32file.CreateFile(
+        full_path,
+        win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+        0, None, win32file.OPEN_EXISTING, 0, None
+    )
+    win32pipe.SetNamedPipeHandleState(handle, win32pipe.PIPE_READMODE_MESSAGE, None, None)
+    return handle
 
 
 def _find_and_claim_pipe() -> tuple[str, object]:
@@ -26,37 +39,39 @@ def _find_and_claim_pipe() -> tuple[str, object]:
     a race where another process claims a pipe between listing and
     connecting.
     """
-    try:
-        names = os.listdir(PIPE_DIR)
-    except OSError as e:
-        raise RuntimeError(f"Could not enumerate named pipes: {e}") from e
+    last_error = None
+    last_candidate_count = 0
+    for attempt in range(CLAIM_ATTEMPTS):
+        try:
+            names = os.listdir(PIPE_DIR)
+        except OSError as e:
+            last_error = e
+            time.sleep(CLAIM_DELAY_SECONDS)
+            continue
 
-    candidates = [n for n in names if PIPE_NAME_RE.match(n)]
-    if not candidates:
+        candidates = [n for n in names if PIPE_NAME_RE.match(n)]
+        last_candidate_count = len(candidates)
+        for name in candidates:
+            full_path = f"{PIPE_DIR}\\{name}"
+            try:
+                return full_path, _connect_pipe(full_path)
+            except pywintypes.error as e:
+                last_error = e
+                # ERROR_PIPE_BUSY (231): another Bridge already claimed this
+                # instance (nMaxInstances=1 server-side). Try the next candidate.
+                continue
+
+        time.sleep(CLAIM_DELAY_SECONDS)
+
+    if last_candidate_count == 0:
         raise RuntimeError(
             f"No named pipes found matching '{PIPE_PREFIX}<pid>' under {PIPE_DIR}. "
             "Is the DLL injected into at least one running game instance?"
         )
-
-    last_error = None
-    for name in candidates:
-        full_path = f"{PIPE_DIR}\\{name}"
-        try:
-            handle = win32file.CreateFile(
-                full_path,
-                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                0, None, win32file.OPEN_EXISTING, 0, None
-            )
-            return full_path, handle
-        except pywintypes.error as e:
-            last_error = e
-            # 231 = ERROR_PIPE_BUSY -- another Bridge already claimed this
-            # instance (nMaxInstances=1 server-side). Try the next candidate.
-            continue
-
     raise RuntimeError(
-        f"Found {len(candidates)} candidate pipe(s) matching '{PIPE_PREFIX}<pid>', "
+        f"Found {last_candidate_count} candidate pipe(s) matching '{PIPE_PREFIX}<pid>', "
         f"but could not connect to any of them (all busy, or another error). "
+        f"Launch at least as many injected game instances as N_ENVS. "
         f"Last error: {last_error}"
     )
 
@@ -72,18 +87,10 @@ class Bridge:
         """
         if pid is not None:
             full_path = f"{PIPE_DIR}\\{PIPE_PREFIX}{pid}"
-            self.pipe = win32file.CreateFile(
-                full_path,
-                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                0, None, win32file.OPEN_EXISTING, 0, None
-            )
+            self.pipe = _connect_pipe(full_path)
             self.pipe_name = full_path
         elif pipe_name is not None:
-            self.pipe = win32file.CreateFile(
-                pipe_name,
-                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                0, None, win32file.OPEN_EXISTING, 0, None
-            )
+            self.pipe = _connect_pipe(pipe_name)
             self.pipe_name = pipe_name
         else:
             self.pipe_name, self.pipe = _find_and_claim_pipe()
@@ -95,13 +102,16 @@ class Bridge:
         self.close()
 
     def close(self):
-        if self.pipe:
-            win32file.CloseHandle(self.pipe)
-            self.pipe = None
+        pipe = getattr(self, "pipe", None)
+        if pipe:
+            try:
+                win32file.CloseHandle(pipe)
+            finally:
+                self.pipe = None
 
     def send(self, command: str) -> str:
         win32file.WriteFile(self.pipe, command.encode())
-        result = win32file.ReadFile(self.pipe, 4096)
+        result = win32file.ReadFile(self.pipe, 262144)
         return result[1].decode()
 
     # ---- State ----
@@ -133,8 +143,8 @@ class Bridge:
     def release_all(self, joy_index: int) -> None:
         for button in ("a", "b", "x", "y", "lb", "dup"):
             self.set_joy_button(joy_index, button, False)
-        self.set_joy_axis(joy_index, "x", 0)
-        self.set_joy_axis(joy_index, "y", 0)
+        self.set_joy_axis(joy_index, "lx", 0)
+        self.set_joy_axis(joy_index, "ly", 0)
 
 
 if __name__ == "__main__":

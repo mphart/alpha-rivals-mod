@@ -29,6 +29,10 @@ STICK_MAX = 32767
 FPS = 30
 
 
+def _normalize(value: float, lo: float, hi: float) -> float:
+    return 2.0 * (value - lo) / (hi - lo) - 1.0
+
+
 class RoAEnv(gym.Env):
     metadata = {"render_modes": []}
 
@@ -73,10 +77,18 @@ class RoAEnv(gym.Env):
 
         # ---- Observation space ----
         # Flattened from bridge.get_state()
-        self.num_player_slots = 4
-        self.values_per_player = 17
         self.num_game_values = 4
-        obs_dim = self.num_player_slots * self.values_per_player + self.num_game_values
+
+        self.values_per_player = 25
+        self.num_player_slots = 4
+
+        self.num_projectile_slots = 8
+        self.values_per_projectile = 6
+
+        self.num_ground_fire_slots = 6
+        self.values_per_ground_fire = 3
+
+        obs_dim = self.num_player_slots * self.values_per_player + self.num_projectile_slots * self.values_per_projectile + self.num_ground_fire_slots * self.values_per_ground_fire + self.num_game_values
         self.observation_space = spaces.Box(
             low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32
         )
@@ -87,8 +99,9 @@ class RoAEnv(gym.Env):
             1: {f: False for f in BUTTON_FIELDS},
         }
 
-        # Weighted-random compatible checkpoint, or None (idle opponent).
-        self.opponent_model = self._load_static_opponent(self.step_offset)
+        print(f"[RoAEnv] connected to {self.bridge.pipe_name}", flush=True)
+        # Opponent is sampled on reset so we do not load a checkpoint twice at startup.
+        self.opponent_model = None
 
     # ------------------------------------------------------------------
     # Gym API
@@ -140,12 +153,17 @@ class RoAEnv(gym.Env):
         reward, terminated = self.reward_manager.compute_reward(self.prev_state, curr_state, self.self_player_index, self.opponent_player_index)
         self.prev_state = curr_state
 
-        truncated = False
+        self._steps_this_episode += 1
+        truncated = self._steps_this_episode >= self.max_episode_steps
         info = {}
         return obs, reward, terminated, truncated, info
 
     def close(self):
-        self._release_all_buttons()
+        try:
+            self._release_all_buttons()
+        except Exception:
+            pass
+        self.bridge.close()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -180,7 +198,7 @@ class RoAEnv(gym.Env):
         if step_offset <= 0:
             raise ValueError(f"step_offset must be positive, got {step_offset}")
 
-        weighted = []
+        weighted = [(None, 10.0)]  # idle opponent
         if CHECKPOINT_DIR.is_dir():
             for path in CHECKPOINT_DIR.glob("*.zip"):
                 match = CHECKPOINT_STEPS_RE.search(path.name)
@@ -201,8 +219,12 @@ class RoAEnv(gym.Env):
             idx = int(self.np_random.choice(len(weighted), p=probs))
             path, _ = weighted.pop(idx)
 
+            if path is None:
+                print("[RoAEnv] opponent will idle")
+                return None
+
             try:
-                model = PPO.load(str(path))
+                model = PPO.load(str(path), device="cpu")
             except Exception as e:
                 print(f"[RoAEnv] skip opponent {path.name}: failed to load ({e})")
                 continue
@@ -218,15 +240,11 @@ class RoAEnv(gym.Env):
 
         print("[RoAEnv] no compatible opponent checkpoint found; opponent will idle")
         return None
-    
-    def _normalize(self, value: float, min: float, max: float) -> float:
-        # normalize the value to range [-1, 1]
-        return 2 * (value - min) / (max - min) - 1
 
     def _state_to_obs(self, state: dict, player_index: int) -> np.ndarray:
         values = []
-        players = state.get("players", [])
 
+        players = state.get("players", [])
         for i in range(self.num_player_slots):
             if i < len(players) and players[i].get("on", False):
                 p = players[i]
@@ -234,24 +252,58 @@ class RoAEnv(gym.Env):
                     1.0, # on
                     _normalize(float(p.get("percent", 0.0)), 0.0, 999.0),
                     _normalize(float(p.get("stock", 0.0)), 0.0, 99.0),
-                    _normalize(float(p.get("x", 0.0)), -100.0, 1500.0),
-                    _normalize(float(p.get("y", 0.0)), -100.0, 1500.0),
-                    _normalize(float(p.get("vel_x", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("vel_y", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("anim", 0.0)), 53.0, 200.0),
-                    _normalize(float(p.get("anim_sprite", 0.0)), 0.0, 25.0),
-                    _normalize(float(p.get("frames_left", 0.0)), 0.0, 60.0),
-                    _normalize(float(p.get("character", 0.0)), 0.0, 100.0),
-                    _normalize(float(p.get("team", 0.0)), 0.0, 2.0),
-                    _normalize(float(p.get("used_air_dodge", 0.0)), 0.0, 1.0),
-                    _normalize(float(p.get("used_wall_jump", 0.0)), 0.0, 1.0),
-                    _normalize(float(p.get("jumps_left", 0.0)), 0.0, 1.0),
-                    _normalize(float(p.get("on_fire", 0.0)), 0.0, 1.0),
-                    _normalize(float(p.get("dir", 0.0)), -1.0, 1.0),
-                    _normalize(float(p.get("invuln", 0.0)), 9.0, 300.0),
+                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("url", 0.0)), 1.0, 19.0),
+                    _normalize(float(p.get("state", 0.0)), 0.0, 350.0),
+                    _normalize(float(p.get("state_timer", 0.0)), 0.0, 350.0),
+                    _normalize(float(p.get("prev_state", 0.0)), 0.0, 350.0),
+                    _normalize(float(p.get("prev_prev_state", 0.0)), 0.0, 350.0),
+                    _normalize(float(p.get("attack", 0.0)), 0.0, 250.0),
+                    _normalize(float(p.get("spr_dir", 0.0)), -1.0, 1.0),
+                    _normalize(float(p.get("hsp", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("vsp", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("has_walljump", 0.0)), 0.0, 1.0),
+                    _normalize(float(p.get("has_airdodge", 0.0)), 0.0, 1.0),
+                    _normalize(float(p.get("djumps", 0.0)), 0.0, 3.0),
+                    _normalize(float(p.get("attack_invince", 0.0)), 0.0, 500.0),
+                    _normalize(float(p.get("respawn_invince_time", 0.0)), 0.0, 500.0),
+                    _normalize(float(p.get("hitstop", 0.0)), 0.0, 100.0),
+                    _normalize(float(p.get("hitstop_full", 0.0)), 0.0, 100.0),
+                    _normalize(float(p.get("strong_charge", 0.0)), 0, 60),
+                    _normalize(float(p.get("window", 0.0)), 0, 50.0),
+                    _normalize(float(p.get("window_timer", 0.0)), 0, 100.0),
+                    _normalize(float(p.get("burn_timer", 0.0)), 0, 150.0),
                 ])
             else:
                 values.extend([0.0] * self.values_per_player)
+
+        projectiles = state.get("projectiles", [])
+        for i in range(self.num_projectile_slots):
+            if i < len(projectiles):
+                p = projectiles[i]
+                values.extend([
+                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("hsp", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("vsp", 0.0)), -250.0, 250.0),
+                    _normalize(float(p.get("spr_dir", 0.0)), -1.0, 1.0),
+                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
+                ])
+            else:
+                values.extend([0.0] * self.values_per_projectile)
+
+        ground_fires = state.get("ground_fires") or state.get("ground") or []
+        for i in range(self.num_ground_fire_slots):
+            if i < len(ground_fires):
+                p = ground_fires[i]
+                values.extend([
+                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
+                ])
+            else:
+                values.extend([0.0] * self.values_per_ground_fire)
 
         game = state.get("game", {})
         stage = game.get("stage", 939)

@@ -33,35 +33,61 @@ class RewardManager():
         prev_self = self._player(prev_state, self_player_index)
         prev_opp = self._player(prev_state, opponent_player_index)
 
-        curr_opponent_pct = curr_opp.get("percent", 0.0)
-        curr_self_pct = curr_self.get("percent", 0.0)
-        prev_opponent_pct = prev_opp.get("percent", 0.0)
-        prev_self_pct = prev_self.get("percent", 0.0)
+        curr_opponent_pct = curr_opp.get("percent")
+        curr_self_pct = curr_self.get("percent")
+        prev_opponent_pct = prev_opp.get("percent")
+        prev_self_pct = prev_self.get("percent")
 
-        curr_opponent_stock = curr_opp.get("stock", 0)
-        curr_self_stock = curr_self.get("stock", 0)
-        prev_opponent_stock = prev_opp.get("stock", 0)
-        prev_self_stock = prev_self.get("stock", 0)
+        curr_opponent_stock = curr_opp.get("stock")
+        curr_self_stock = curr_self.get("stock")
+        prev_opponent_stock = prev_opp.get("stock")
+        prev_self_stock = prev_self.get("stock")
 
         # percent related rewards
-        if (curr_opponent_pct > prev_opponent_pct):
+        if (
+            curr_opponent_pct is not None
+            and prev_opponent_pct is not None
+            and curr_opponent_pct > prev_opponent_pct
+        ):
             pct_diff = curr_opponent_pct - prev_opponent_pct
             reward += pct_diff * self.opponent_percent_loss_reward
-        if(curr_self_pct > prev_self_pct):
+        if (
+            curr_self_pct is not None
+            and prev_self_pct is not None
+            and curr_self_pct > prev_self_pct
+        ):
             pct_diff = curr_self_pct - prev_self_pct
             reward += pct_diff * self.self_percent_loss_reward
-        
-        # stock related rewards
-        if(curr_self_stock < prev_self_stock):
-            reward += self.self_stock_loss_reward
-            print('Self stock decreased, reward: ', reward)
-        if(curr_opponent_stock < prev_opponent_stock):
-            reward += self.opponent_stock_loss_reward
-            print('Opponent stock decreased, reward: ', reward)
 
-        # check if the match has ended
-        if curr_opponent_stock == 0 or curr_self_stock == 0:
-            reward += self.self_win_reward if curr_self_stock > curr_opponent_stock else self.opponent_win_reward
+        # stock related rewards
+        if (
+            curr_self_stock is not None
+            and prev_self_stock is not None
+            and curr_self_stock < prev_self_stock
+        ):
+            reward += self.self_stock_loss_reward
+            print("Self stock decreased, reward: ", reward)
+        if (
+            curr_opponent_stock is not None
+            and prev_opponent_stock is not None
+            and curr_opponent_stock < prev_opponent_stock
+        ):
+            reward += self.opponent_stock_loss_reward
+            print("Opponent stock decreased, reward: ", reward)
+
+        # Missing player data defaults to stock 0, which is not a real KO.
+        # Require a previous in-match stock reading before ending the episode.
+        prev_had_stocks = (prev_self_stock or 0) > 0 or (prev_opponent_stock or 0) > 0
+        if (
+            prev_had_stocks
+            and curr_self_stock is not None
+            and curr_opponent_stock is not None
+            and (curr_self_stock == 0 or curr_opponent_stock == 0)
+        ):
+            if curr_self_stock > curr_opponent_stock:
+                reward += self.self_win_reward
+            elif curr_opponent_stock > curr_self_stock:
+                reward += self.opponent_win_reward
             terminated = True
 
         return reward, terminated

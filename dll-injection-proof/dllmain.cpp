@@ -5,6 +5,230 @@
 #include "minhook.h"
 #include <Xinput.h>   // XINPUT_STATE, XINPUT_CAPABILITIES, button bit constants
 #include <sstream>    // for hex formatting in log lines
+#include <cstring>
+
+// Custom GML instance vars live at slot 100000 + index (0x186A0).
+static const int kGmlInstanceVarBase = 0x186A0;
+// DAT_0605b540 / DAT_0605b544: char** name table indexed by that custom index.
+static const uintptr_t kCustomVarNamesRva = 0x05C5B540;
+static const uintptr_t kCustomVarCountRva = 0x05C5B544;
+
+static void CopyGameCString(const char* s, char* dst, int dstSize) {
+    if (!dst || dstSize <= 0) return;
+    dst[0] = '\0';
+    __try {
+        if (!s) return;
+        int i = 0;
+        for (; i < dstSize - 1 && s[i]; ++i) dst[i] = s[i];
+        dst[i] = '\0';
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        dst[0] = '\0';
+    }
+}
+
+static void AppendJsonString(std::stringstream& ss, const char* s) {
+    char buf[80];
+    CopyGameCString(s, buf, sizeof(buf));
+    ss << '"';
+    for (int i = 0; buf[i]; ++i) {
+        char c = buf[i];
+        if (c == '"' || c == '\\') ss << '\\';
+        if (static_cast<unsigned char>(c) >= 32) ss << c;
+    }
+    ss << '"';
+}
+
+static bool SafeRead32(uintptr_t addr, uint32_t* out) {
+    __try {
+        *out = *(uint32_t*)addr;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SafeReadPtr(uintptr_t addr, uintptr_t* out) {
+    __try {
+        *out = *(uintptr_t*)addr;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool SafeReadDouble(uintptr_t addr, double* out) {
+    __try {
+        *out = *(double*)addr;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static const char* GetInstanceObjectName(uintptr_t instance) {
+    const char* name = nullptr;
+    __try {
+        uintptr_t objectGm = *(uintptr_t*)(instance + 0x68);
+        if (objectGm) name = *(const char**)objectGm;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        name = nullptr;
+    }
+    return name;
+}
+
+// Scan DAT_0605b540 for a custom instance-var name. Returns the index, or -1.
+// FUN_0554af20 only searches builtins, so "hsp"/"vsp" always miss there.
+static int FindCustomVarIndex(uintptr_t moduleBase, const char* name) {
+    int found = -1;
+    __try {
+        int count = *(int*)(moduleBase + kCustomVarCountRva);
+        const char** names = *(const char***)(moduleBase + kCustomVarNamesRva);
+        if (!names || count <= 0 || count > 200000) return -1;
+        for (int i = 0; i < count; ++i) {
+            const char* s = names[i];
+            if (s && strcmp(s, name) == 0) {
+                found = i;
+                break;
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+    return found;
+}
+
+static const char* CustomVarName(uintptr_t moduleBase, int index) {
+    const char* name = nullptr;
+    __try {
+        int count = *(int*)(moduleBase + kCustomVarCountRva);
+        const char** names = *(const char***)(moduleBase + kCustomVarNamesRva);
+        if (names && index >= 0 && index < count) name = names[index];
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        name = nullptr;
+    }
+    return name;
+}
+
+// Custom vars: packed RValue array at CInstance+0x4, else CHashMap at +0x2C
+// (12-byte nodes: value*, key, hash). FUN_0554b070 / FUN_055534b0.
+static bool ReadInstCustomReal(uintptr_t instance, int index, double* out) {
+    if (index < 0 || !out) return false;
+    __try {
+        uintptr_t arr = *(uintptr_t*)(instance + 0x4);
+        if (arr) {
+            uintptr_t rv = arr + static_cast<uintptr_t>(index) * 16;
+            uint32_t kind = *(uint32_t*)(rv + 0xC) & 0xFFFFFFu;
+            if (kind != 0) return false;
+            *out = *(double*)rv;
+            return true;
+        }
+        uintptr_t map = *(uintptr_t*)(instance + 0x2C);
+        if (!map) return false;
+        int cap = *(int*)map;
+        uintptr_t entries = *(uintptr_t*)(map + 0x10);
+        if (!entries || cap <= 0 || cap > 65536) return false;
+        for (int i = 0; i < cap; ++i) {
+            uintptr_t e = entries + static_cast<uintptr_t>(i) * 12;
+            if ((int32_t)*(uint32_t*)(e + 8) <= 0) continue;
+            if ((int32_t)*(uint32_t*)(e + 4) != index) continue;
+            uintptr_t rv = *(uintptr_t*)e;
+            if (!rv) return false;
+            uint32_t kind = *(uint32_t*)(rv + 0xC) & 0xFFFFFFu;
+            if (kind != 0) return false;
+            *out = *(double*)rv;
+            return true;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return false;
+}
+
+static void AppendRValueJson(std::stringstream& ss, uintptr_t moduleBase, int index, uintptr_t rv) {
+    ss << "{\"i\":" << index << ",\"name\":";
+    AppendJsonString(ss, CustomVarName(moduleBase, index));
+    uint32_t kindRaw = 0xFFFFFFFF;
+    if (!rv || !SafeRead32(rv + 0xC, &kindRaw)) {
+        ss << ",\"kind\":-1}";
+        return;
+    }
+    uint32_t kind = kindRaw & 0xFFFFFFu;
+    ss << ",\"kind\":" << kind;
+    if (kind == 0 || kind == 13) {
+        double v = 0;
+        if (SafeReadDouble(rv, &v)) ss << ",\"v\":" << v;
+    }
+    else if (kind == 7) {
+        uint32_t raw = 0;
+        if (SafeRead32(rv, &raw)) ss << ",\"v\":" << (int32_t)raw;
+    }
+    else {
+        uintptr_t payload = 0;
+        SafeReadPtr(rv, &payload);
+        ss << ",\"ptr\":\"0x" << std::hex << payload << std::dec << "\"";
+    }
+    ss << "}";
+}
+
+static void AppendInstanceVarsJson(std::stringstream& ss, uintptr_t moduleBase, uintptr_t inst) {
+    uintptr_t packed = 0, map = 0;
+    uint32_t n30 = 0, used = 0, cap = 0;
+    SafeReadPtr(inst + 0x4, &packed);
+    SafeReadPtr(inst + 0x2C, &map);
+    SafeRead32(inst + 0x30, &n30);
+    if (map) {
+        SafeRead32(map, &cap);
+        SafeRead32(map + 0x4, &used);
+    }
+
+    ss << "\"packed\":\"0x" << std::hex << packed
+        << "\",\"yyvars\":\"0x" << map
+        << "\",\"n30\":" << std::dec << n30
+        << ",\"map_cap\":" << cap
+        << ",\"map_used\":" << used
+        << ",\"vars\":[";
+
+    bool first = true;
+    int emitted = 0;
+    const int kMax = 600;
+
+    uintptr_t entries = 0;
+    if (map) SafeReadPtr(map + 0x10, &entries);
+    if (entries && cap > 0 && cap <= 65536) {
+        for (uint32_t i = 0; i < cap && emitted < kMax; ++i) {
+            uintptr_t e = entries + static_cast<uintptr_t>(i) * 12;
+            uint32_t hash = 0, key = 0;
+            uintptr_t rv = 0;
+            if (!SafeRead32(e + 8, &hash) || (int32_t)hash <= 0) continue;
+            SafeRead32(e + 4, &key);
+            SafeReadPtr(e, &rv);
+            if (!first) ss << ",";
+            first = false;
+            AppendRValueJson(ss, moduleBase, (int32_t)key, rv);
+            emitted++;
+        }
+    }
+    else if (packed && n30 > 0 && n30 < 2000) {
+        uint32_t n = n30 < (uint32_t)kMax ? n30 : (uint32_t)kMax;
+        for (uint32_t i = 0; i < n; ++i) {
+            if (!first) ss << ",";
+            first = false;
+            AppendRValueJson(ss, moduleBase, (int)i, packed + static_cast<uintptr_t>(i) * 16);
+            emitted++;
+        }
+    }
+
+    ss << "]";
+    if (emitted >= kMax) ss << ",\"truncated\":true";
+}
 
 // ============================================================
 // Game window resolution (needed for focus-hook spoofing below)
@@ -214,7 +438,6 @@ void SetupXInputHook() {
 // ============================================================
 
 void SetupInputHook() {
-    return;
     if (MH_Initialize() != MH_OK) { Log("MH_Initialize failed"); return; }
 
     ResolveGameWindow();
@@ -313,7 +536,7 @@ DWORD WINAPI MainThread(LPVOID param) {
         pipeName.c_str(),
         PIPE_ACCESS_DUPLEX,
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
-        1, 4096, 4096, 0, NULL);
+        1, 262144, 262144, 0, NULL);
     if (pipe == INVALID_HANDLE_VALUE) {
         Log("Failed to create pipe, error: " + std::to_string(GetLastError()));
         return 1;
@@ -335,6 +558,24 @@ DWORD WINAPI MainThread(LPVOID param) {
                 std::string response;
                 if (command == "get_state") {
                     response = BuildGameStateJson();
+                }
+                else if (command.rfind("set_player_stock", 0) == 0) {
+                    int player;
+                    int val;
+                    sscanf_s(command.c_str(), "set_player_stock %d %d", &player, &val);
+                    response = WritePlayerStock(player, static_cast<double>(val));
+                }
+                else if (command.rfind("set_player_percent", 0) == 0) {
+                    int player;
+                    int val;
+                    sscanf_s(command.c_str(), "set_player_percent %d %d", &player, &val);
+                    response = WritePlayerPercent(player, static_cast<double>(val));
+                }
+                else if (command.rfind("set_player_on", 0) == 0) {
+                    int player;
+                    int val;
+                    sscanf_s(command.c_str(), "set_player_on %d %d", &player, &val);
+                    response = WritePlayerOn(player, static_cast<double>(val));
                 }
                 else if (command.rfind("set_key", 0) == 0) {
                     int vKey = 0; int down = 0;
@@ -438,41 +679,58 @@ DWORD WINAPI MainThread(LPVOID param) {
                     response = ss.str();
                 }
                 else if (command == "list_instances") {
-                    // Walk the room's active-instance linked list and report
-                    // each live instance's address + object_index, so we can
-                    // identify which numeric IDs correspond to players,
-                    // projectiles, etc.
-                    //
-                    // Run_Room is at VA 0x06066758 (Ghidra, image base 0x400000),
-                    // so the module-relative offset is 0x05C66758 -- not
-                    // 0x01C66758 (that lands in .text and reads as a null head).
+                    // Walk the room's active-instance linked list.
+                    // Run_Room VA 0x06066758 => RVA 0x05C66758.
                     uintptr_t moduleBase = (uintptr_t)GetModuleHandleA("RivalsofAether.exe");
                     uintptr_t runRoom = *(uintptr_t*)(moduleBase + 0x05C66758);
                     uintptr_t current = runRoom ? *(uintptr_t*)(runRoom + 0x80) : 0;
 
+                    static bool slotsReady = false;
+                    static int hspIndex = -1;
+                    static int vspIndex = -1;
+                    if (!slotsReady) {
+                        hspIndex = FindCustomVarIndex(moduleBase, "hsp");
+                        vspIndex = FindCustomVarIndex(moduleBase, "vsp");
+                        slotsReady = true;
+                    }
+
                     std::stringstream ss;
                     ss << "{\"run_room\":\"0x" << std::hex << runRoom
-                        << "\",\"head\":\"0x" << current << std::dec
-                        << "\",\"instances\":[";
+                        << "\",\"head\":\"0x" << current
+                        << "\",\"hsp_index\":" << std::dec << hspIndex
+                        << ",\"vsp_index\":" << vspIndex
+                        << ",\"instances\":[";
                     bool first = true;
                     int count = 0;
-                    const int MAX_INSTANCES = 500; // safety cap
+                    const int MAX_INSTANCES = 500;
 
                     while (current != 0 && count < MAX_INSTANCES) {
                         uint32_t flags = *(uint32_t*)(current + 0x74);
                         if ((flags & 0x3) == 0) {
+                            int32_t instanceId = *(int32_t*)(current + 0x78);
                             int32_t objectIndex = *(int32_t*)(current + 0x7C);
                             int32_t spriteIndex = *(int32_t*)(current + 0x80);
+                            float x = *(float*)(current + 0xA0);
+                            float y = *(float*)(current + 0xA4);
+                            const char* name = GetInstanceObjectName(current);
 
                             if (!first) ss << ",";
                             first = false;
                             ss << "{\"addr\":\"0x" << std::hex << current << std::dec << "\""
+                                << ",\"id\":" << instanceId
                                 << ",\"object_index\":" << objectIndex
-                                << ",\"sprite_index\":" << spriteIndex << "}";
+                                << ",\"name\":";
+                            AppendJsonString(ss, name);
+                            ss << ",\"sprite_index\":" << spriteIndex
+                                << ",\"x\":" << x
+                                << ",\"y\":" << y;
 
-                            if (objectIndex == 5) {
-                                Log("Player found at 0x" + std::hex + current);
-                            }
+                            double hsp = 0, vsp = 0;
+                            if (ReadInstCustomReal(current, hspIndex, &hsp))
+                                ss << ",\"hsp\":" << hsp;
+                            if (ReadInstCustomReal(current, vspIndex, &vsp))
+                                ss << ",\"vsp\":" << vsp;
+                            ss << "}";
                         }
                         current = *(uintptr_t*)(current + 0x130);
                         count++;
@@ -480,12 +738,52 @@ DWORD WINAPI MainThread(LPVOID param) {
                     ss << "]}";
                     response = ss.str();
                 }
+                else if (command.rfind("dump_vars", 0) == 0) {
+                    // First live instance of object_index (default 3 = oPlayer).
+                    int objectIndex = 17;
+                    sscanf_s(command.c_str(), "dump_vars %d", &objectIndex);
+
+                    uintptr_t moduleBase = (uintptr_t)GetModuleHandleA("RivalsofAether.exe");
+                    uintptr_t runRoom = *(uintptr_t*)(moduleBase + 0x05C66758);
+                    uintptr_t current = runRoom ? *(uintptr_t*)(runRoom + 0x80) : 0;
+
+                    uintptr_t found = 0;
+                    int scanned = 0;
+                    const int MAX_INSTANCES = 500;
+                    while (current != 0 && scanned < MAX_INSTANCES) {
+                        uint32_t flags = *(uint32_t*)(current + 0x74);
+                        if ((flags & 0x3) == 0 &&
+                            *(int32_t*)(current + 0x7C) == objectIndex) {
+                            found = current;
+                            break;
+                        }
+                        current = *(uintptr_t*)(current + 0x130);
+                        scanned++;
+                    }
+
+                    std::stringstream ss;
+                    ss << "{\"object_index\":" << objectIndex
+                        << ",\"var_base\":" << kGmlInstanceVarBase
+                        << ",\"addr\":\"0x" << std::hex << found << std::dec << "\"";
+                    if (found) {
+                        ss << ",\"id\":" << *(int32_t*)(found + 0x78)
+                            << ",\"name\":";
+                        AppendJsonString(ss, GetInstanceObjectName(found));
+                        ss << ",";
+                        AppendInstanceVarsJson(ss, moduleBase, found);
+                    }
+                    ss << "}";
+                    response = ss.str();
+                }
                 else {
                     response = "unknown command";
                 }
 
                 WriteFile(pipe, response.c_str(), (DWORD)response.size(), NULL, NULL);
-                Log(response);
+                if (command.rfind("dump_vars", 0) == 0)
+                    Log("dump_vars bytes=" + std::to_string(response.size()));
+                else
+                    Log(response);
             }
 
             Log("Client disconnected.");

@@ -1,3 +1,4 @@
 legacy/*
 checkpoints/*
 selfplay_roa_tensorboard/*
+__pycache__/*

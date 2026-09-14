@@ -105,7 +105,7 @@ class MatchMacro:
 
         # map select screen
         self._press("a", 0.05, 1)
-        self.tap_direction("dup", 3, 0.05, 0.15)
+        self.tap_direction("dup", 6, 0.05, 0.15)
         time.sleep(0.5)
         self._press("a", 0.05, 1)
         time.sleep(0.5)
@@ -115,7 +115,7 @@ class MatchMacro:
 
     def quit_match(self) -> bool:
         self._press("start", 0.05, 1)
-        self._tap_direction("ddown", 3, 0.05, 0.15)
+        self.tap_direction("ddown", 3, 0.05, 0.15)
 
 
 def test_macro():

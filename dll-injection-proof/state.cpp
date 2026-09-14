@@ -2,6 +2,7 @@
 #include "framework.h"
 #include "state.h"
 #include "util.h"
+#include <cstring>
 
 uintptr_t GetModuleBase(const char* moduleName) {
     return (uintptr_t)GetModuleHandleA(moduleName);
@@ -34,27 +35,30 @@ double ReadPlayerValue(int player, std::initializer_list<uintptr_t> offsets) {
     uintptr_t addr = FollowOffsetChain(base, offsets);
     addr += 0x10 * player;
     double val = *(double*)addr;
-    //Log("final addr = " + ToHex(addr));
-    //Log("final value = " + std::to_string(val));
+    return val;
+}
+double WritePlayerValue(int player, double val, std::initializer_list<uintptr_t> offsets) {
+    if (player < 0 || player > 3) { throw std::invalid_argument("player must be between 0 and 3"); }
+    uintptr_t base = GetModuleBase("RivalsofAether.exe");
+    uintptr_t addr = FollowOffsetChain(base, offsets);
+    addr += 0x10 * player;
+    *addr = val;
     return val;
 }
 
 double ReadPlayerOn(int player) {
-    //Log("ReadPlayerOn(" + std::to_string(player) + ")");
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x0, 0x4, 0x4, 0x310
     });
 }
 
 double ReadPlayerPercent(int player) {
-    //Log("ReadPlayerPercent(" + std::to_string(player) + ")");
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1510
     });
 }
 
 double ReadPlayerStock(int player) {
-    //Log("ReadPlayerStock(" + std::to_string(player) + ")");
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1710
     });
@@ -67,74 +71,10 @@ double ReadPlayerTeam(int player) {
     });
 }
 
-double ReadPlayerX(int player) {
-    //Log("ReadPlayerX(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x20, 0x24, 0xC, 0x110
-    });
-}
-
-double ReadPlayerY(int player) {
-    //Log("ReadPlayerY(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x20, 0x24, 0xC, 0x10
-    });
-}
-
-double ReadPlayerVelX(int player) { return 0; }
-
-double ReadPlayerVelY(int player) { return 0; }
-
-double ReadPlayerAnim(int player) {
-    //Log("ReadPlayerAnim(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x20, 0x24, 0x4, 0x10
-    });
-}
-
-double ReadPlayerAnimSprite(int player) {
-    //Log("ReadPlayerAnimSprite(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x210, 0x20, 0x48, 0x10, 0x24, 0x14, 0x130, 0x0, 0xC, 0x310
-    });
-}
-
-double ReadPlayerFramesLeft(int player) { return 0; }
-
 double ReadPlayerCharacter(int player) {
     //Log("ReadPlayerCharacter(" + std::to_string(player) + ")");
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x20, 0x28, 0x10, 0x28, 0x20, 0x24, 0x4, 0x10
-    });
-}
-
-double ReadPlayerUsedAirDodge(int player) {
-    //Log("ReadPlayerUsedAirDodge(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x210, 0x20, 0x48, 0x10, 0x24, 0xC, 0xE10
-    });
-}
-
-double ReadPlayerJumpsLeft(int player) { return 0; }
-
-double ReadPlayerIsInvulnerable(int player) {
-    //Log("ReadPlayerIsInvulnerable(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x4B0, 0x10, 0x28, 0x10, 0x48, 0x20, 0x44, 0xC, 0x510
-    });
-}
-
-double ReadPlayerDirection(int player) {
-    //Log("ReadPlayerDirection(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x4B0, 0x20, 0x48, 0x0, 0x44, 0xC, 0x130, 0x0, 0xC, 0x110
-    });
-}
-
-double ReadPlayerOnFire(int player) {
-    //Log("ReadPlayerOnFire(" + std::to_string(player) + ")");
-    return ReadPlayerValue(player, {
-        0x05C4A8D8, 0x2C, 0x10, 0x4B0, 0x10, 0x8, 0x10, 0x4, 0x4, 0xE10
     });
 }
 
@@ -165,7 +105,390 @@ double ReadGameClock() {
     });
 }
 
+double WritePlayerOn(int player, double val) {
+    return WritePlayerValue(player, val, {
+        0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x0, 0x4, 0x4, 0x310
+    });
+}
+
+double WritePlayerPercent(int player, double val) {
+    return WritePlayerValue(player, val, {
+        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1510
+    });
+}
+
+double WritePlayerStock(int player, double val) {
+    return WritePlayerValue(player, val, {
+        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1710
+    });
+}
+
 double ReadGameTeamsEnabled() { return 0; }
+
+// --- oPlayer instance vars (CInstance hashmap / packed RValue array) ---
+
+static const uintptr_t kCustomVarNamesRva = 0x05C5B540;
+static const uintptr_t kCustomVarCountRva = 0x05C5B544;
+static const uintptr_t kRunRoomRva = 0x05C66758;
+static const int kOPlayerObjectIndex = 3;
+static const int kPHitBoxObjectIndex = 6;
+static const int kPBurnBoxObjectIndex = 17;
+static const int kMaxRoomInstances = 500;
+static const int kMaxProjectiles = 64;
+static const int kMaxGroundFires = 64;
+
+enum OPlayerField {
+    kUrl = 0,
+    kState,
+    kStateTimer,
+    kTrackPlayer,
+    kPrevState,
+    kPrevPrevState,
+    kAttack,
+    kSprDir,
+    kHsp,
+    kVsp,
+    kHasWalljump,
+    kHasAirdodge,
+    kDjumps,
+    kAttackInvince,
+    kRespawnInvinceTime,
+    kHitstop,
+    kHitstopFull,
+    kStrongCharge,
+    kWindow,
+    kWindowTimer,
+    kBurnTimer,
+    kPlayer,
+    kOPlayerFieldCount
+};
+
+static const char* kOPlayerFieldNames[kOPlayerFieldCount] = {
+    "url", "state", "state_timer", "track_player", "prev_state", "prev_prev_state",
+    "attack", "spr_dir", "hsp", "vsp", "has_walljump", "has_airdodge", "djumps",
+    "attack_invince", "respawn_invince_time", "hitstop", "hitstop_full",
+    "strong_charge", "window", "window_timer", "burn_timer", "player"
+};
+
+static int g_oPlayerFieldIndex[kOPlayerFieldCount];
+static bool g_oPlayerFieldIndexReady = false;
+
+static int FindCustomVarIndex(const char* name) {
+    int found = -1;
+    __try {
+        uintptr_t moduleBase = GetModuleBase("RivalsofAether.exe");
+        int count = *(int*)(moduleBase + kCustomVarCountRva);
+        const char** names = *(const char***)(moduleBase + kCustomVarNamesRva);
+        if (!names || count <= 0 || count > 200000) return -1;
+        for (int i = 0; i < count; ++i) {
+            const char* s = names[i];
+            if (s && strcmp(s, name) == 0) {
+                found = i;
+                break;
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+    return found;
+}
+
+static void EnsureOPlayerFieldIndices() {
+    if (g_oPlayerFieldIndexReady) return;
+    for (int i = 0; i < kOPlayerFieldCount; ++i)
+        g_oPlayerFieldIndex[i] = FindCustomVarIndex(kOPlayerFieldNames[i]);
+    g_oPlayerFieldIndexReady = true;
+}
+
+static double* OPlayerFieldPtr(OPlayerState* st, int field) {
+    switch (field) {
+    case kUrl: return &st->url;
+    case kState: return &st->state;
+    case kStateTimer: return &st->state_timer;
+    case kTrackPlayer: return &st->track_player;
+    case kPrevState: return &st->prev_state;
+    case kPrevPrevState: return &st->prev_prev_state;
+    case kAttack: return &st->attack;
+    case kSprDir: return &st->spr_dir;
+    case kHsp: return &st->hsp;
+    case kVsp: return &st->vsp;
+    case kHasWalljump: return &st->has_walljump;
+    case kHasAirdodge: return &st->has_airdodge;
+    case kDjumps: return &st->djumps;
+    case kAttackInvince: return &st->attack_invince;
+    case kRespawnInvinceTime: return &st->respawn_invince_time;
+    case kHitstop: return &st->hitstop;
+    case kHitstopFull: return &st->hitstop_full;
+    case kStrongCharge: return &st->strong_charge;
+    case kWindow: return &st->window;
+    case kWindowTimer: return &st->window_timer;
+    case kBurnTimer: return &st->burn_timer;
+    case kPlayer: return &st->player;
+    default: return nullptr;
+    }
+}
+
+// GMS RValue kinds we treat as numbers:
+// 0=real, 7=int32, 10=int64, 13=bool. state/player/track_player are often int32.
+static bool ReadRValueNumber(uintptr_t rv, double* out) {
+    if (!rv || !out) return false;
+    __try {
+        uint32_t kind = *(uint32_t*)(rv + 0xC) & 0xFFFFFFu;
+        switch (kind) {
+        case 0:  // real
+        case 13: // bool (stored as double 0/1 in this build)
+            *out = *(double*)rv;
+            return true;
+        case 7:  // int32
+            *out = (double)(int32_t)(*(uint32_t*)rv);
+            return true;
+        case 10: // int64
+            *out = (double)(*(int64_t*)rv);
+            return true;
+        default:
+            return false;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+enum ProjField {
+    kProjHsp = 0,
+    kProjVsp,
+    kProjSprDir,
+    kProjPlayer,
+    kProjFieldCount
+};
+
+static const char* kProjFieldNames[kProjFieldCount] = {
+    "hsp", "vsp", "spr_dir", "player"
+};
+
+static int g_projFieldIndex[kProjFieldCount];
+static bool g_projFieldIndexReady = false;
+
+static int g_playerVarIndex = -2; // -2 = not resolved yet
+
+static void EnsureProjFieldIndices() {
+    if (g_projFieldIndexReady) return;
+    for (int i = 0; i < kProjFieldCount; ++i)
+        g_projFieldIndex[i] = FindCustomVarIndex(kProjFieldNames[i]);
+    g_projFieldIndexReady = true;
+}
+
+static int PlayerVarIndex() {
+    if (g_playerVarIndex == -2)
+        g_playerVarIndex = FindCustomVarIndex("player");
+    return g_playerVarIndex;
+}
+
+// Fill values[0..nFields) from the hashmap and/or packed RValue array.
+static bool ReadCustomVars(uintptr_t instance, const int* indices, int nFields,
+    double* values, uint32_t* have)
+{
+    if (!indices || !values || !have || nFields <= 0) return false;
+    memset(values, 0, sizeof(double) * nFields);
+    *have = 0;
+
+    __try {
+        uintptr_t packed = *(uintptr_t*)(instance + 0x4);
+        uintptr_t map = *(uintptr_t*)(instance + 0x2C);
+
+        if (map) {
+            int cap = *(int*)map;
+            uintptr_t entries = *(uintptr_t*)(map + 0x10);
+            if (entries && cap > 0 && cap <= 65536) {
+                for (int i = 0; i < cap; ++i) {
+                    uintptr_t e = entries + static_cast<uintptr_t>(i) * 12;
+                    if ((int32_t)*(uint32_t*)(e + 8) <= 0) continue;
+                    int key = (int32_t)*(uint32_t*)(e + 4);
+                    uintptr_t rv = *(uintptr_t*)e;
+                    for (int f = 0; f < nFields; ++f) {
+                        if (indices[f] < 0 || indices[f] != key) continue;
+                        if (ReadRValueNumber(rv, &values[f]))
+                            *have |= (1u << f);
+                    }
+                }
+            }
+        }
+
+        if (packed) {
+            for (int f = 0; f < nFields; ++f) {
+                if (indices[f] < 0 || (*have & (1u << f))) continue;
+                uintptr_t rv = packed + static_cast<uintptr_t>(indices[f]) * 16;
+                if (ReadRValueNumber(rv, &values[f]))
+                    *have |= (1u << f);
+            }
+        }
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool ReadInstanceXY(uintptr_t instance, float* x, float* y) {
+    __try {
+        *x = *(float*)(instance + 0xA0);
+        *y = *(float*)(instance + 0xA4);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool ReadOPlayerFromInstance(uintptr_t instance, OPlayerState* out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    EnsureOPlayerFieldIndices();
+
+    if (!ReadInstanceXY(instance, &out->x, &out->y)) return false;
+
+    double values[kOPlayerFieldCount];
+    if (!ReadCustomVars(instance, g_oPlayerFieldIndex, kOPlayerFieldCount, values, &out->have))
+        return false;
+
+    for (int f = 0; f < kOPlayerFieldCount; ++f) {
+        double* dst = OPlayerFieldPtr(out, f);
+        if (dst) *dst = values[f];
+    }
+    out->valid = true;
+    return true;
+}
+
+static bool ReadProjectileFromInstance(uintptr_t instance, ProjectileState* out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    EnsureProjFieldIndices();
+    if (!ReadInstanceXY(instance, &out->x, &out->y)) return false;
+
+    double values[kProjFieldCount];
+    if (!ReadCustomVars(instance, g_projFieldIndex, kProjFieldCount, values, &out->have))
+        return false;
+
+    out->hsp = values[kProjHsp];
+    out->vsp = values[kProjVsp];
+    out->spr_dir = values[kProjSprDir];
+    out->player = values[kProjPlayer];
+    out->valid = true;
+    return true;
+}
+
+static bool ReadGroundFireFromInstance(uintptr_t instance, GroundFireState* out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!ReadInstanceXY(instance, &out->x, &out->y)) return false;
+
+    int playerIndex = PlayerVarIndex();
+    double playerVal = 0;
+    uint32_t have = 0;
+    if (playerIndex >= 0)
+        ReadCustomVars(instance, &playerIndex, 1, &playerVal, &have);
+
+    out->player = playerVal;
+    out->have = have;
+    out->valid = true;
+    return true;
+}
+
+static uintptr_t RoomListHead() {
+    uintptr_t current = 0;
+    __try {
+        uintptr_t moduleBase = GetModuleBase("RivalsofAether.exe");
+        uintptr_t runRoom = *(uintptr_t*)(moduleBase + kRunRoomRva);
+        current = runRoom ? *(uintptr_t*)(runRoom + 0x80) : 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    return current;
+}
+
+int ReadOPlayerInstances(OPlayerState out[4]) {
+    if (!out) return 0;
+    for (int i = 0; i < 4; ++i)
+        memset(&out[i], 0, sizeof(out[i]));
+
+    int assigned = 0;
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0 &&
+                *(int32_t*)(current + 0x7C) == kOPlayerObjectIndex) {
+                OPlayerState st;
+                if (ReadOPlayerFromInstance(current, &st)) {
+                    int slot = -1;
+                    if (st.have & (1u << kPlayer))
+                        slot = (int)st.player - 1;
+                    else if (st.have & (1u << kTrackPlayer))
+                        slot = (int)st.track_player - 1;
+                    if (slot >= 0 && slot < 4) {
+                        out[slot] = st;
+                        assigned++;
+                    }
+                }
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return assigned;
+    }
+    return assigned;
+}
+
+int ReadProjectileInstances(ProjectileState* out, int maxCount) {
+    if (!out || maxCount <= 0) return 0;
+    int n = 0;
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances && n < maxCount) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0 &&
+                *(int32_t*)(current + 0x7C) == kPHitBoxObjectIndex) {
+                if (ReadProjectileFromInstance(current, &out[n]))
+                    n++;
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return n;
+    }
+    return n;
+}
+
+int ReadGroundFireInstances(GroundFireState* out, int maxCount) {
+    if (!out || maxCount <= 0) return 0;
+    int n = 0;
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances && n < maxCount) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0 &&
+                *(int32_t*)(current + 0x7C) == kPBurnBoxObjectIndex) {
+                if (ReadGroundFireFromInstance(current, &out[n]))
+                    n++;
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return n;
+    }
+    return n;
+}
 
 typedef double(*ReadFuncNoArg)();
 typedef double(*ReadFuncIntArg)(int);
@@ -194,6 +517,9 @@ std::string BuildGameStateJson() {
     std::ostringstream json;
     json << "{";
 
+    OPlayerState instPlayers[4];
+    ReadOPlayerInstances(instPlayers);
+
     // --- Players ---
     json << "\"players\":[";
     for (int p = 0; p < 4; ++p) {
@@ -202,30 +528,73 @@ std::string BuildGameStateJson() {
         double onVal = 0;
         bool onOk = TryReadIntArg(ReadPlayerOn, p, onVal);
         bool isOn = onOk && (onVal != 0.0);
+        const OPlayerState& inst = instPlayers[p];
+        if (inst.valid) isOn = true;
 
         json << "{\"on\":" << (isOn ? "true" : "false");
 
         if (isOn) {
             double v;
-            if (TryReadIntArg(ReadPlayerPercent, p, v))        json << ",\"percent\":" << v;
-            if (TryReadIntArg(ReadPlayerStock, p, v))          json << ",\"stock\":" << v;
-            if (TryReadIntArg(ReadPlayerX, p, v))              json << ",\"x\":" << v;
-            if (TryReadIntArg(ReadPlayerY, p, v))              json << ",\"y\":" << v;
-            if (TryReadIntArg(ReadPlayerVelX, p, v))           json << ",\"vel_x\":" << v;
-            if (TryReadIntArg(ReadPlayerVelY, p, v))           json << ",\"vel_y\":" << v;
-            if (TryReadIntArg(ReadPlayerAnim, p, v))           json << ",\"anim\":" << v;
-            if (TryReadIntArg(ReadPlayerAnimSprite, p, v))     json << ",\"anim_sprite\":" << v;
-            if (TryReadIntArg(ReadPlayerFramesLeft, p, v))     json << ",\"frames_left\":" << v;
-            if (TryReadIntArg(ReadPlayerCharacter, p, v))      json << ",\"character\":" << v;
-            if (TryReadIntArg(ReadPlayerTeam, p, v))           json << ",\"team\":" << v;
-            if (TryReadIntArg(ReadPlayerUsedAirDodge, p, v))   json << ",\"used_air_dodge\":" << v;
-            if (TryReadIntArg(ReadPlayerJumpsLeft, p, v))      json << ",\"jumps_left\":" << v;
-            if (TryReadIntArg(ReadPlayerDirection, p, v))      json << ",\"dir\":" << v;
-            if (TryReadIntArg(ReadPlayerIsInvulnerable, p, v)) json << ",\"invuln\":" << v;
+            if (TryReadIntArg(ReadPlayerPercent, p, v)) json << ",\"percent\":" << v;
+            if (TryReadIntArg(ReadPlayerStock, p, v))   json << ",\"stock\":" << v;
 
-            // zetterburn
-            if (TryReadIntArg(ReadPlayerOnFire, p, v))         json << ",\"on_fire\":" << v;
+            if (inst.valid) {
+                json << ",\"x\":" << inst.x << ",\"y\":" << inst.y;
+                auto addInst = [&](OPlayerField field, const char* name, double value) {
+                    if (inst.have & (1u << field))
+                        json << ",\"" << name << "\":" << value;
+                };
+                addInst(kUrl, "url", inst.url);
+                addInst(kState, "state", inst.state);
+                addInst(kStateTimer, "state_timer", inst.state_timer);
+                addInst(kTrackPlayer, "track_player", inst.track_player);
+                addInst(kPrevState, "prev_state", inst.prev_state);
+                addInst(kPrevPrevState, "prev_prev_state", inst.prev_prev_state);
+                addInst(kAttack, "attack", inst.attack);
+                addInst(kSprDir, "spr_dir", inst.spr_dir);
+                addInst(kHsp, "hsp", inst.hsp);
+                addInst(kVsp, "vsp", inst.vsp);
+                addInst(kHasWalljump, "has_walljump", inst.has_walljump);
+                addInst(kHasAirdodge, "has_airdodge", inst.has_airdodge);
+                addInst(kDjumps, "djumps", inst.djumps);
+                addInst(kAttackInvince, "attack_invince", inst.attack_invince);
+                addInst(kRespawnInvinceTime, "respawn_invince_time", inst.respawn_invince_time);
+                addInst(kHitstop, "hitstop", inst.hitstop);
+                addInst(kHitstopFull, "hitstop_full", inst.hitstop_full);
+                addInst(kStrongCharge, "strong_charge", inst.strong_charge);
+                addInst(kWindow, "window", inst.window);
+                addInst(kWindowTimer, "window_timer", inst.window_timer);
+                addInst(kBurnTimer, "burn_timer", inst.burn_timer);
+                addInst(kPlayer, "player", inst.player);
+            }
         }
+        json << "}";
+    }
+    json << "],";
+
+    ProjectileState projectiles[kMaxProjectiles];
+    int nProj = ReadProjectileInstances(projectiles, kMaxProjectiles);
+    json << "\"projectiles\":[";
+    for (int i = 0; i < nProj; ++i) {
+        if (i > 0) json << ",";
+        const ProjectileState& hit = projectiles[i];
+        json << "{\"x\":" << hit.x << ",\"y\":" << hit.y;
+        if (hit.have & (1u << kProjHsp)) json << ",\"hsp\":" << hit.hsp;
+        if (hit.have & (1u << kProjVsp)) json << ",\"vsp\":" << hit.vsp;
+        if (hit.have & (1u << kProjSprDir)) json << ",\"spr_dir\":" << hit.spr_dir;
+        if (hit.have & (1u << kProjPlayer)) json << ",\"player\":" << hit.player;
+        json << "}";
+    }
+    json << "],";
+
+    GroundFireState ground[kMaxGroundFires];
+    int nGround = ReadGroundFireInstances(ground, kMaxGroundFires);
+    json << "\"ground\":[";
+    for (int i = 0; i < nGround; ++i) {
+        if (i > 0) json << ",";
+        const GroundFireState& fire = ground[i];
+        json << "{\"x\":" << fire.x << ",\"y\":" << fire.y;
+        if (fire.have & 1u) json << ",\"player\":" << fire.player;
         json << "}";
     }
     json << "],";
