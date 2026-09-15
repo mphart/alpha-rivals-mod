@@ -63,6 +63,16 @@ static bool SafeReadPtr(uintptr_t addr, uintptr_t* out) {
     }
 }
 
+static bool SafeWriteDouble(uintptr_t addr, double val) {
+    __try {
+        *(double*)addr = val;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 static bool SafeReadDouble(uintptr_t addr, double* out) {
     __try {
         *out = *(double*)addr;
@@ -550,6 +560,70 @@ DWORD WINAPI MainThread(LPVOID param) {
                 if (command == "get_state") {
                     response = BuildGameStateJson();
                 }
+                else if (command == "get_game_stage") {
+                    response = std::to_string(ReadGameStage());
+                }
+                else if (command == "get_game_is_running") {
+                    response = ReadGameIsRunning() ? "1" : "0";
+                }
+                else if (command == "get_is_map_selection") {
+                    response = ReadIsMapSelection() ? "1" : "0";
+                }
+                else if (command.rfind("get_player_cursor_y", 0) == 0) {
+                    int player = 0;
+                    sscanf_s(command.c_str(), "get_player_cursor_y %d", &player);
+                    if (player < 0 || player > 3) {
+                        response = "error: player must be 0-3";
+                    }
+                    else {
+                        response = std::to_string(ReadPlayerCursorY(player));
+                    }
+                }
+                else if (command.rfind("scan_player_globals", 0) == 0) {
+                    int player = 0;
+                    sscanf_s(command.c_str(), "scan_player_globals %d", &player);
+                    response = ScanPlayerGlobalCandidates(player);
+                }
+                else if (command.rfind("dump_global_var", 0) == 0) {
+                    char name[128] = {};
+                    sscanf_s(command.c_str(), "dump_global_var %127s", name, (unsigned)_countof(name));
+                    response = DumpGlobalVar(name);
+                }
+                else if (command.rfind("peek_mem", 0) == 0) {
+                    unsigned addr = 0;
+                    int n = 16;
+                    sscanf_s(command.c_str(), "peek_mem %x %d", &addr, &n);
+                    if (n < 1) n = 1;
+                    if (n > 64) n = 64;
+                    std::ostringstream ss;
+                    ss << "{\"addr\":\"0x" << std::hex << addr << std::dec << "\",\"u32\":[";
+                    for (int i = 0; i < n; ++i) {
+                        uint32_t w = 0xFFFFFFFFu;
+                        SafeRead32((uintptr_t)addr + i * 4, &w);
+                        if (i) ss << ",";
+                        ss << "\"0x" << std::hex << w << std::dec << "\"";
+                    }
+                    ss << "],\"f64\":[";
+                    for (int i = 0; i < n / 2; ++i) {
+                        double d = -1;
+                        SafeReadDouble((uintptr_t)addr + i * 8, &d);
+                        if (i) ss << ",";
+                        ss << d;
+                    }
+                    ss << "]}";
+                    response = ss.str();
+                }
+                else if (command.rfind("poke_f64", 0) == 0) {
+                    unsigned addr = 0;
+                    double val = 0;
+                    sscanf_s(command.c_str(), "poke_f64 %x %lf", &addr, &val);
+                    response = SafeWriteDouble((uintptr_t)addr, val) ? "ok" : "error: poke failed";
+                }
+                else if (command.rfind("resolve_player_choice", 0) == 0) {
+                    int player = 0;
+                    sscanf_s(command.c_str(), "resolve_player_choice %d", &player);
+                    response = ResolvePlayerChoiceAddr(player);
+                }
                 else if (command.rfind("set_player_stock", 0) == 0) {
                     int player = 0;
                     int val = 0;
@@ -565,23 +639,52 @@ DWORD WINAPI MainThread(LPVOID param) {
                 else if (command.rfind("get_player_choice", 0) == 0) {
                     int player = 0;
                     sscanf_s(command.c_str(), "get_player_choice %d", &player);
-                    response = std::to_string(ReadPlayerChoice(player));
+                    if (player < 0 || player > 3) {
+                        response = "error: player must be 0-3";
+                    }
+                    else {
+                        double val = 0;
+                        if (!TryReadPlayerChoice(player, &val))
+                            response = "error: css choice not found for player " + std::to_string(player);
+                        else
+                            response = std::to_string(val);
+                    }
                 }
                 else if (command.rfind("set_player_choice", 0) == 0) {
                     int player = 0;
                     int val = 0;
                     sscanf_s(command.c_str(), "set_player_choice %d %d", &player, &val);
-                    double written = WritePlayerChoice(player, static_cast<double>(val));
-                    if (written == 0.0 && val != 0)
-                        response = "error: css url not found for player " + std::to_string(player);
-                    else
-                        response = std::to_string(written);
+                    if (player < 0 || player > 3) {
+                        response = "error: player must be 0-3";
+                    }
+                    else if (!WritePlayerChoice(player, static_cast<double>(val))) {
+                        response = "error: css choice not found for player " + std::to_string(player);
+                    }
+                    else {
+                        response = "ok";
+                    }
+                }
+                else if (command.rfind("get_player_on", 0) == 0) {
+                    int player = 0;
+                    sscanf_s(command.c_str(), "get_player_on %d", &player);
+                    if (player < 0 || player > 3) {
+                        response = "error: player must be 0-3";
+                    }
+                    else {
+                        response = std::to_string(ReadPlayerOn(player));
+                    }
                 }
                 else if (command.rfind("set_player_on", 0) == 0) {
                     int player = 0;
                     int val = 0;
                     sscanf_s(command.c_str(), "set_player_on %d %d", &player, &val);
-                    response = std::to_string(WritePlayerOn(player, static_cast<double>(val)));
+                    if (player < 0 || player > 3) {
+                        response = "error: player must be 0-3";
+                    }
+                    else {
+                        double written = WritePlayerOn(player, val ? 1.0 : 0.0);
+                        response = std::to_string(written);
+                    }
                 }
                 else if (command.rfind("set_key", 0) == 0) {
                     int vKey = 0; int down = 0;

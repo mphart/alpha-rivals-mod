@@ -111,7 +111,7 @@ int main() {
     }
     std::cout << "Found " << pids.size() << " process(es).\n";
 
-    std::string dllPath = "C:\\Users\\mhart\\source\\repos\\dll-injection-proof\\Debug\\alpha-rivals-mod.dll";
+    std::string dllPath = "C:\\Users\\mhart\\source\\repos\\dll-injection-proof\\dll-injection-proof\\Debug\\alpha-rivals-mod.dll";
 
     for (DWORD pid : pids) {
         std::cout << "Injecting into PID: " << pid << "\n";

@@ -23,7 +23,7 @@ from env import RoAEnv
 RESUME_FROM_CHECKPOINT =  None
 
 TOTAL_TIMESTEPS = 100_000_000
-N_ENVS = 4  # one subprocess per injected game instance
+N_ENVS = 3  # one subprocess per injected game instance
 CHECKPOINT_EVERY = 50_000  # timesteps between checkpoint files
 
 
@@ -50,7 +50,7 @@ def main():
             clip_range=0.2,
             ent_coef=0.01,         
             learning_rate=3e-4,
-            policy_kwargs=dict(net_arch=[512, 256, 256, 256, 256]), 
+            policy_kwargs=dict(net_arch=[512, 256, 256, 256]), 
             verbose=1,
             tensorboard_log="./selfplay_roa_tensorboard/",
         )

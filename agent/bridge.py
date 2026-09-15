@@ -127,9 +127,116 @@ class Bridge:
         raw = self.send("get_stock")
         return [float(x) for x in raw.split()]
 
-    # ---- Keyboard input ----
-    def set_key(self, vkey: int, down: bool) -> str:
-        return self.send(f"set_key {vkey:x} {1 if down else 0}")
+    def get_game_stage(self) -> float:
+        """Read the current stage id (ReadGameStage)."""
+        return float(self.send("get_game_stage"))
+
+    def get_game_is_running(self) -> bool:
+        """
+        Whether a match appears to be in progress.
+
+        RoA has no durable GML bool named ``game_is_running``. The engine's own
+        check is the script ``is_gameplay_room()`` (room-id OR list). This
+        wrapper instead asks the DLL for a memory proxy:
+
+        - ``True`` if the current room has a live ``gameplay_parent`` instance
+          (match controller) **or** at least one live ``oPlayer``.
+        - ``False`` on CSS, stage select, results, and other menus (no fighters /
+          match controller in the room list).
+
+        Useful as a fast "are we in a fight?" poll; still debounce around room
+        transitions if you need menu-navigation safety.
+        """
+        return self.send("get_game_is_running").strip() != "0"
+
+    def get_is_map_selection(self) -> bool:
+        """
+        Whether the stage/map select screen appears to be up.
+
+        Character select and map select share the same ``game_stage`` id, so
+        stage alone cannot tell them apart. There is also no dedicated GML
+        ``is_map_selection`` bool. This wrapper uses a room-instance proxy:
+
+        - ``True`` if a live ``ss_stagebox_obj`` or ``ss_stage_header_obj``
+          exists (stage-select UI; room ``local_stage_select`` /
+          ``network_stage_select``).
+        - ``False`` on character select (``cs_playerbg_obj`` instead), in
+          matches, results, and other menus.
+        """
+        return self.send("get_is_map_selection").strip() != "0"
+
+    def dump_css(self) -> dict:
+        """Dump cs_playerbg_obj instances (object 219) and their custom vars."""
+        return json.loads(self.send("dump_css"))
+
+    # ---- Character select / player slots ----
+    @staticmethod
+    def _require_ok(response: str, action: str) -> str:
+        if response.startswith("error:"):
+            raise RuntimeError(f"{action} failed: {response}")
+        return response
+
+    def get_player_on(self, player: int) -> bool:
+        """Read whether CSS/global slot player (0-3) is marked on."""
+        raw = self._require_ok(self.send(f"get_player_on {player}"), "get_player_on")
+        return float(raw) != 0.0
+
+    def get_player_cursor_y(self, player: int) -> float:
+        """Read CSS cursor Y for slot player (0-3) via ReadPlayerCursorY."""
+        raw = self._require_ok(
+            self.send(f"get_player_cursor_y {player}"),
+            "get_player_cursor_y",
+        )
+        return float(raw)
+
+    def set_player_on(self, player: int, on: bool) -> float:
+        """
+        Write the durable player_on flag for slot player (0-3).
+        Returns the value written (0.0 or 1.0).
+        """
+        raw = self._require_ok(
+            self.send(f"set_player_on {player} {1 if on else 0}"),
+            "set_player_on",
+        )
+        return float(raw)
+
+    def get_player_choice(self, player: int) -> float:
+        """
+        Read CSS character pick for slot player (0-3).
+        Values match CH_* ids (1=random, 2=Zetterburn, 3=Orcane, ...).
+        Backed by the CE player array parallel to cursor_y (not old_char).
+        """
+        raw = self._require_ok(
+            self.send(f"get_player_choice {player}"),
+            "get_player_choice",
+        )
+        return float(raw)
+
+    def set_player_choice(self, player: int, url: int) -> str:
+        """
+        Write CSS character pick for slot player (0-3).
+        Returns the pipe response (``ok`` on success).
+        """
+        return self._require_ok(
+            self.send(f"set_player_choice {player} {int(url)}"),
+            "set_player_choice",
+        )
+
+    def configure_css_slots(
+        self,
+        choices: dict[int, int] | None = None,
+        on: dict[int, bool] | None = None,
+    ) -> None:
+        """
+        Batch-configure CSS: set on/off flags and/or character urls.
+        Example: configure_css_slots(choices={0: 3, 1: 5}, on={2: False, 3: False})
+        """
+        if on:
+            for player, enabled in on.items():
+                self.set_player_on(player, enabled)
+        if choices:
+            for player, url in choices.items():
+                self.set_player_choice(player, url)
 
     # ---- Joystick input ----
     def set_joy_button(self, joy_index: int, button: str, down: bool) -> str:
@@ -155,14 +262,26 @@ class Bridge:
 
 
 if __name__ == "__main__":
-    # Auto-discovers and claims two DIFFERENT available instances (assuming
-    # two games are running with the DLL injected) -- the second Bridge()
-    # call will skip whichever pipe the first one already claimed, since
-    # that pipe is now busy from the OS's perspective.
     bridge1 = Bridge()
     print("bridge1 connected to:", bridge1.pipe_name)
-    print(bridge1.get_state())
+    print(bridge1.set_player_choice(0, 3))
+    print("readback:", bridge1.get_player_choice(0))
 
-    bridge2 = Bridge()
-    print("bridge2 connected to:", bridge2.pipe_name)
-    print(bridge2.get_state())
+    # print(bridge1.set_joy_button(0, "a", True))
+    # print(bridge1.set_joy_button(1, "a", True))
+    # print(bridge1.set_joy_button(2, "a", True))
+    # print(bridge1.set_joy_button(3, "a", True))
+    # sleep(0.1)
+    # print(bridge1.set_joy_button(0, "a", False))
+    # print(bridge1.set_joy_button(1, "a", False))
+    # print(bridge1.set_joy_button(2, "a", False))
+    # print(bridge1.set_joy_button(3, "a", False))
+
+    # set_joy_button(0, "start", True)
+
+    # print(bridge1.set_joy_button(0, "a", False))
+
+    # print("stage: ", bridge1.get_game_stage())
+    # print("game is running: ", bridge1.get_game_is_running())
+    # print("cursor y: ", bridge1.get_player_cursor_y(0))
+    # print("is map selection: ", bridge1.get_is_map_selection())

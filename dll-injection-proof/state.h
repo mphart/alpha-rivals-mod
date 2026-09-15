@@ -82,14 +82,22 @@ int ReadPuddleInstances(PuddleState* out, int maxCount);
 // player state (0 <= player < 4)
 double ReadPlayerOn(int player);
 double ReadPlayerChoice(int player);
+bool TryReadPlayerChoice(int player, double* out);
 double ReadPlayerPercent(int player);
 double ReadPlayerStock(int player);
 double ReadPlayerCursorY(int player);
 
 double WritePlayerOn(int player, double val);
-double WritePlayerChoice(int player, double val);
+bool WritePlayerChoice(int player, double val);
 double WritePlayerPercent(int player, double val);
 double WritePlayerStock(int player, double val);
+
+// Debug: scan CE player doubles for CSS character-id candidates.
+std::string ScanPlayerGlobalCandidates(int player);
+
+// Debug: dump a named global custom var (and array elems if kind==array).
+std::string DumpGlobalVar(const char* name);
+std::string ResolvePlayerChoiceAddr(int player);
 
 // environment state
 double ReadGameSpeed();
@@ -97,6 +105,14 @@ double ReadGameStage();
 double ReadGameClock();
 double ReadGameStocks();
 double ReadGameTeamsEnabled(); // TODO
+
+// Proxy for "match is currently running". Not a real GML game_is_running bool;
+// true when a live gameplay_parent or oPlayer exists in the current room.
+bool ReadGameIsRunning();
+
+// Proxy for stage/map select (vs character select). True when a live
+// ss_stagebox_obj or ss_stage_header_obj exists; CSS uses cs_* objects instead.
+bool ReadIsMapSelection();
 
 // function to get the entire game state
 std::string BuildGameStateJson();

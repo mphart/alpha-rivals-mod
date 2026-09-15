@@ -3,6 +3,7 @@
 #include "state.h"
 #include "util.h"
 #include <cstring>
+#include <cmath>
 
 uintptr_t GetModuleBase(const char* moduleName) {
     return (uintptr_t)GetModuleHandleA(moduleName);
@@ -75,6 +76,251 @@ double ReadPlayerCursorY(int player) {
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1C10
     });
+}
+
+// CSS character ids live in a parallel double array next to cursor_y in the
+// same CE player struct. On this build the character slot is +0x600 from the
+// cursor_y slot for the same player (stride 0x10). old_char on cs_playerbg_obj
+// is a one-frame cache that the game overwrites from this array.
+static const uintptr_t kCssCursorYFinal = 0x1C10;
+static const uintptr_t kCssChoiceFromCursorY = 0x600;
+
+static uintptr_t PlayerCursorYAddr(int player) {
+    if (player < 0 || player > 3) return 0;
+    uintptr_t base = GetModuleBase("RivalsofAether.exe");
+    uintptr_t addr = FollowOffsetChain(base, {
+        0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, kCssCursorYFinal
+    });
+    return addr + 0x10 * static_cast<uintptr_t>(player);
+}
+
+static uintptr_t PlayerCssChoiceAddr(int player) {
+    uintptr_t cy = PlayerCursorYAddr(player);
+    return cy ? cy + kCssChoiceFromCursorY : 0;
+}
+
+static bool LooksLikeCharId(double v) {
+    if (!(v == v) || v < 0.0 || v > 40.0) return false; // NaN / out of range
+    double iv = 0;
+    if (modf(v, &iv) != 0.0) return false;
+    return true;
+}
+
+static bool TryReadStatsOff(int player, uintptr_t off, double* out) {
+    __try {
+        *out = ReadPlayerValue(player, {
+            0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, off
+        });
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool TryReadOnPathOff(int player, uintptr_t off, double* out) {
+    __try {
+        *out = ReadPlayerValue(player, {
+            0x05C4A8D8, 0x2C, 0x10, 0x78C, 0x0, 0x4, 0x4, off
+        });
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// Scan the known CE player struct for integer-ish values in the character-id range.
+// Used to locate the live CSS character pick (old_char is overwritten by the game).
+std::string ScanPlayerGlobalCandidates(int player) {
+    if (player < 0 || player > 3) return "error: player must be 0-3";
+    std::ostringstream ss;
+    ss << "{\"player\":" << player << ",\"stats\":[";
+    bool first = true;
+    for (uintptr_t off = 0x1400; off <= 0x1E00; off += 0x10) {
+        double v = 0;
+        if (!TryReadStatsOff(player, off, &v)) continue;
+        if (!LooksLikeCharId(v)) continue;
+        if (!first) ss << ",";
+        first = false;
+        ss << "{\"off\":\"0x" << std::hex << off << std::dec
+           << "\",\"v\":" << v << "}";
+    }
+    ss << "],\"onpath\":[";
+    first = true;
+    for (uintptr_t off = 0x200; off <= 0x500; off += 0x10) {
+        double v = 0;
+        if (!TryReadOnPathOff(player, off, &v)) continue;
+        if (!LooksLikeCharId(v)) continue;
+        if (!first) ss << ",";
+        first = false;
+        ss << "{\"off\":\"0x" << std::hex << off << std::dec
+           << "\",\"v\":" << v << "}";
+    }
+    ss << "]}";
+    return ss.str();
+}
+
+static int FindCustomVarIndex(const char* name);
+static bool ReadRValueNumber(uintptr_t rv, double* out);
+static uintptr_t FindInstanceVarRValue(uintptr_t instance, int index);
+
+static uintptr_t GlobalInstance() {
+    uintptr_t global = 0;
+    __try {
+        uintptr_t moduleBase = GetModuleBase("RivalsofAether.exe");
+        global = *(uintptr_t*)(moduleBase + 0x05C4A8D8);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+    return global;
+}
+
+static bool TryReadArrayElem(uintptr_t arrObj, int elem, int pArrayOff, int lengthOff, double* out) {
+    __try {
+        int length = *(int*)(arrObj + lengthOff);
+        uintptr_t pArray = *(uintptr_t*)(arrObj + pArrayOff);
+        if (!pArray || length <= 0 || length > 256 || elem < 0 || elem >= length) return false;
+        uintptr_t rv = pArray + static_cast<uintptr_t>(elem) * 16;
+        return ReadRValueNumber(rv, out);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool TryReadRvKind(uintptr_t rv, uint32_t* kindOut) {
+    __try {
+        *kindOut = *(uint32_t*)(rv + 0xC) & 0xFFFFFFu;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool TryReadRvPayload(uintptr_t rv, uintptr_t* payloadOut) {
+    __try {
+        *payloadOut = *(uintptr_t*)rv;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+static bool TryReadU32(uintptr_t addr, uint32_t* out) {
+    __try {
+        *out = *(uint32_t*)addr;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+std::string DumpGlobalVar(const char* name) {
+    if (!name || !name[0]) return "error: name required";
+    uintptr_t global = GlobalInstance();
+    if (!global) return "error: global instance null";
+    int index = FindCustomVarIndex(name);
+    if (index < 0) return std::string("error: custom var not found: ") + name;
+
+    uintptr_t rv = FindInstanceVarRValue(global, index);
+    std::ostringstream ss;
+    ss << "{\"name\":\"" << name << "\",\"index\":" << index
+       << ",\"global\":\"0x" << std::hex << global
+       << "\",\"rv\":\"0x" << (rv ? rv : 0) << std::dec << "\"";
+    if (!rv) {
+        ss << ",\"error\":\"rvalue not present\"}";
+        return ss.str();
+    }
+
+    uint32_t kind = 0;
+    if (!TryReadRvKind(rv, &kind)) {
+        ss << ",\"error\":\"bad rvalue\"}";
+        return ss.str();
+    }
+    ss << ",\"kind\":" << kind;
+
+    double num = 0;
+    if (ReadRValueNumber(rv, &num))
+        ss << ",\"v\":" << num;
+
+    uintptr_t payload = 0;
+    TryReadRvPayload(rv, &payload);
+    ss << ",\"ptr\":\"0x" << std::hex << payload << std::dec << "\"";
+
+    // If array (kind 2), probe common RefDynamicArrayOfRValue layouts + raw header.
+    if (kind == 2 && payload) {
+        ss << ",\"raw32\":[";
+        for (int i = 0; i < 16; ++i) {
+            uint32_t w = 0xFFFFFFFFu;
+            TryReadU32(payload + i * 4, &w);
+            if (i) ss << ",";
+            ss << "\"0x" << std::hex << w << std::dec << "\"";
+        }
+        ss << "],\"ptr_reads\":[";
+        bool first = true;
+        for (int i = 0; i < 16; ++i) {
+            uint32_t w = 0;
+            if (!TryReadU32(payload + i * 4, &w)) continue;
+            // Likely user-mode heap pointer on Win32
+            if (w < 0x01000000 || w > 0x7FFE0000) continue;
+            uintptr_t cand = (uintptr_t)w;
+            ss << (first ? "" : ",");
+            first = false;
+            ss << "{\"at\":" << (i * 4) << ",\"p\":\"0x" << std::hex << cand << std::dec
+               << "\",\"elems\":[";
+            for (int e = 0; e < 8; ++e) {
+                double v = 0;
+                uintptr_t erv = cand + static_cast<uintptr_t>(e) * 16;
+                bool ok = ReadRValueNumber(erv, &v);
+                if (e) ss << ",";
+                if (ok) ss << v;
+                else {
+                    uint32_t k = 0xFFFFFFFFu;
+                    TryReadU32(erv + 0xC, &k);
+                    ss << "{\"kind\":" << (k & 0xFFFFFFu) << "}";
+                }
+            }
+            ss << "]}";
+        }
+        ss << "],\"array_probes\":[";
+        first = true;
+        // Wider set of (pArrayOff, lengthOff) pairs.
+        for (int pArrayOff = 4; pArrayOff <= 0x40; pArrayOff += 4) {
+            for (int lengthOff = 4; lengthOff <= 0x40; lengthOff += 4) {
+                if (pArrayOff == lengthOff) continue;
+                double elems[8];
+                int got = 0;
+                for (int i = 0; i < 8; ++i) {
+                    if (!TryReadArrayElem(payload, i, pArrayOff, lengthOff, &elems[i])) break;
+                    got++;
+                }
+                if (got < 4) continue;
+                // Prefer layouts whose elems look like CSS character ids.
+                int charish = 0;
+                for (int i = 0; i < got; ++i)
+                    if (elems[i] >= 0 && elems[i] <= 40 && elems[i] == (double)(int)elems[i])
+                        charish++;
+                if (charish < 3) continue;
+                if (!first) ss << ",";
+                first = false;
+                ss << "{\"pArrayOff\":" << pArrayOff << ",\"lengthOff\":" << lengthOff
+                   << ",\"n\":" << got << ",\"elems\":[";
+                for (int i = 0; i < got; ++i) {
+                    if (i) ss << ",";
+                    ss << elems[i];
+                }
+                ss << "]}";
+            }
+        }
+        ss << "]";
+    }
+    ss << "}";
+    return ss.str();
 }
 
 double WritePlayerOn(int player, double val) {
@@ -328,7 +574,10 @@ static uintptr_t FindInstanceVarRValue(uintptr_t instance, int index) {
     return FindPackedVarRValue(instance, index);
 }
 
-static int g_cssUrlIndex = -2;
+// CSS portraits store the selected character id in old_char (1=random,
+// 2=Zetterburn, 3=Orcane, ...). In-match oPlayer uses url; that var is not
+// present on cs_playerbg_obj.
+static int g_cssChoiceIndex = -2;
 static int g_cssPlayerIndex = -2;
 static int g_cssCursorIndex = -2;
 static int g_cssDrawIndex = -2;
@@ -358,8 +607,8 @@ static int CssSlotFromInstance(uintptr_t instance) {
 }
 
 static void EnsureCssFieldIndices() {
-    if (g_cssUrlIndex < 0)
-        g_cssUrlIndex = FindCustomVarIndex("url");
+    if (g_cssChoiceIndex < 0)
+        g_cssChoiceIndex = FindCustomVarIndex("old_char");
     if (g_cssPlayerIndex < 0)
         g_cssPlayerIndex = FindCustomVarIndex("player");
     if (g_cssCursorIndex < 0)
@@ -370,48 +619,60 @@ static void EnsureCssFieldIndices() {
         g_cssNameWidthIndex = FindCustomVarIndex("name_width");
 }
 
-// CSS portraits are cs_playerbg_obj (object_index 219), one instance per slot.
+// Live CSS character pick: CE array parallel to cursor_y (+0x600).
 static uintptr_t FindPlayerChoiceRValue(int player) {
     if (player < 0 || player > 3) return 0;
-    EnsureCssFieldIndices();
+    // These slots are plain doubles (kind-less CE memory), not GML RValues.
+    // Callers use Read/Write via the address as a double*.
+    return PlayerCssChoiceAddr(player);
+}
 
-    uintptr_t found = 0;
+bool TryReadPlayerChoice(int player, double* out) {
+    if (player < 0 || player > 3 || !out) return false;
+    uintptr_t addr = FindPlayerChoiceRValue(player);
+    if (!addr) return false;
     __try {
-        uintptr_t current = RoomListHead();
-        int scanned = 0;
-        while (current != 0 && scanned < kMaxRoomInstances) {
-            uint32_t flags = *(uint32_t*)(current + 0x74);
-            int32_t objectIndex = *(int32_t*)(current + 0x7C);
-            if ((flags & 0x3) == 0 && objectIndex == kCssPlayerBgObjectIndex) {
-                if (CssSlotFromInstance(current) == player) {
-                    if (g_cssUrlIndex >= 0)
-                        found = FindHashmapVarRValue(current, g_cssUrlIndex);
-                    if (found) break;
-                }
-            }
-            current = *(uintptr_t*)(current + 0x130);
-            scanned++;
-        }
+        *out = *(double*)addr;
+        return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
+        return false;
     }
-    return found;
 }
 
 double ReadPlayerChoice(int player) {
     if (player < 0 || player > 3) { throw std::invalid_argument("player must be between 0 and 3"); }
     double val = 0;
-    uintptr_t rv = FindPlayerChoiceRValue(player);
-    if (!rv || !ReadRValueNumber(rv, &val)) return 0;
+    if (!TryReadPlayerChoice(player, &val)) return 0;
     return val;
 }
 
-double WritePlayerChoice(int player, double val) {
+bool WritePlayerChoice(int player, double val) {
     if (player < 0 || player > 3) { throw std::invalid_argument("player must be between 0 and 3"); }
-    uintptr_t rv = FindPlayerChoiceRValue(player);
-    if (!rv || !WriteRValueNumber(rv, val)) return 0;
-    return val;
+    uintptr_t addr = FindPlayerChoiceRValue(player);
+    if (!addr) return false;
+    __try {
+        *(double*)addr = val;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+std::string ResolvePlayerChoiceAddr(int player) {
+    uintptr_t addr = FindPlayerChoiceRValue(player);
+    uintptr_t cy = PlayerCursorYAddr(player);
+    double val = 0;
+    bool ok = TryReadPlayerChoice(player, &val);
+    std::ostringstream ss;
+    ss << "{\"player\":" << player
+       << ",\"choice_addr\":\"0x" << std::hex << addr
+       << "\",\"cursor_y_addr\":\"0x" << cy << std::dec << "\""
+       << ",\"ok\":" << (ok ? "true" : "false");
+    if (ok) ss << ",\"v\":" << val;
+    ss << "}";
+    return ss.str();
 }
 
 enum ProjField {
@@ -622,6 +883,74 @@ static uintptr_t RoomListHead() {
     return current;
 }
 
+// There is no durable GML bool named game_is_running. The game's own check is
+// the script is_gameplay_room(), which ORs many room ids. As a memory proxy we
+// treat a match as "running" when the current room has a live gameplay_parent
+// (match controller) or at least one live oPlayer. CSS / menus have neither.
+static bool InstanceObjectNameEquals(uintptr_t instance, const char* want) {
+    if (!instance || !want) return false;
+    bool match = false;
+    __try {
+        uintptr_t objectGm = *(uintptr_t*)(instance + 0x68);
+        if (!objectGm) return false;
+        const char* name = *(const char**)objectGm;
+        if (!name) return false;
+        match = (strcmp(name, want) == 0);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return match;
+}
+
+bool ReadGameIsRunning() {
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0) {
+                int32_t objectIndex = *(int32_t*)(current + 0x7C);
+                if (objectIndex == kOPlayerObjectIndex)
+                    return true;
+                if (InstanceObjectNameEquals(current, "gameplay_parent"))
+                    return true;
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return false;
+}
+
+// CSS and stage/map select share the same game-stage id. Distinguish map
+// select by the ss_* objects that only exist in local/network stage_select
+// rooms (ss_stagebox_obj tiles, ss_stage_header_obj). Character select uses
+// cs_playerbg_obj instead and will return false here.
+bool ReadIsMapSelection() {
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0) {
+                if (InstanceObjectNameEquals(current, "ss_stagebox_obj") ||
+                    InstanceObjectNameEquals(current, "ss_stage_header_obj"))
+                    return true;
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return false;
+}
+
 int ReadOPlayerInstances(OPlayerState out[4]) {
     if (!out) return 0;
     for (int i = 0; i < 4; ++i)
@@ -827,7 +1156,7 @@ std::string BuildGameStateJson() {
                 addInst(kBurnTimer, "burn_timer", inst.burn_timer);
                 addInst(kPlayer, "player", inst.player);
             }
-            else if (TryReadIntArg(ReadPlayerChoice, p, v)) {
+            else if (TryReadPlayerChoice(p, &v)) {
                 json << ",\"url\":" << v;
             }
         }

@@ -23,14 +23,15 @@ class RewardManager():
         player = players[index]
         return player if isinstance(player, dict) else {}
 
-    def compute_reward(self, prev_state: dict, curr_state: dict, self_player_index: int, opponent_player_index: int):
+    def compute_reward(self, prev_state: dict, curr_state: dict, agent_index: int):
         # initialize return values
         reward = self.existence_reward
         terminated = False
 
-        curr_self = self._player(curr_state, self_player_index)
-        curr_opp = self._player(curr_state, opponent_player_index)
+        curr_self = self._player(curr_state, agent_index)   
         prev_self = self._player(prev_state, self_player_index)
+        
+        curr_opp = self._player(curr_state, opponent_player_index)
         prev_opp = self._player(prev_state, opponent_player_index)
 
         curr_opponent_pct = curr_opp.get("percent")
