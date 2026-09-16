@@ -27,7 +27,7 @@ class ResetManager():
 
     # pick a random agent index from [0, 3]
     def random_agent_index(self) -> int:
-        weights = [1/4, 1/4, 1/4, 1/4]
+        weights = [1/2, 1/2, 0, 0]
         return int(np.random.choice(4, p=weights))
 
     # pick a random number of opponents from [1, 3]
@@ -72,6 +72,7 @@ class ResetManager():
     # takes the list of character choices 0 = off, 1 = random, 2 = zetterburn, etc.
     # starts the match with the given character choices
     def restart_match(self, self_index: int = 0, character_choices: list = [0, 0, 0, 0], player_stocks: list[int] = [3, 3, 3, 3]) -> bool:
+        
         # make a list of player slots that should be open
         open_indexes = [False] * 4
         open_indexes[self_index] = True
@@ -102,8 +103,10 @@ class ResetManager():
                             self.bridge.set_player_choice(i, character_choices[i])
                     # start match button
                     self._press("start", self_index, 0.05, 0.1)
+                    time.sleep(1)
 
                 case GameState.MAP_SELECT:
+                    self._tap_direction("dleft", self_index, 0.1, 0.5)
                     self._press_all(open_indexes, "a", 0.05, 0.1)
 
                 case GameState.UNACTIONABLE:
@@ -114,8 +117,16 @@ class ResetManager():
                     for i in range(4):
                         if player_stocks[i] > 0:
                             self.bridge.set_player_stocks(i, player_stocks[i])
-                    # wait for countdown (TODO detect countdown)
-                    time.sleep(5)
+                    print("[RoAEnv] match started")
+                    # wait for countdown
+                    deadline = time.time() + 10.0
+                    while not self.bridge.get_can_make_inputs():
+                        if time.time() >= deadline:
+                            print("[RoAEnv] timed out waiting for match inputs")
+                            break
+                        if not self.bridge.get_game_is_running():
+                            break
+                        time.sleep(0.01)
                     return True
                 case _:
                     raise ValueError(f"Invalid game state: {game_state}")
@@ -138,15 +149,14 @@ class ResetManager():
 
     def _detect_game_state(self) -> GameState:
         state = self.bridge.get_game_stage()
-        match_running = self.bridge.get_game_is_running()
-        if match_running:
+        if self.bridge.get_is_post_match():
+            return GameState.POST_MATCH
+        if self.bridge.get_game_is_running():
             return GameState.MATCH
         elif (state == 987 or state == 989) and not self.bridge.get_is_map_selection():
             return GameState.CHARACTER_SELECT
         elif (state == 987 or state == 989) and self.bridge.get_is_map_selection():
             return GameState.MAP_SELECT
-        elif state == 1039:
-            return GameState.POST_MATCH
         else:
             return GameState.UNACTIONABLE
 

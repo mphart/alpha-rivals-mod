@@ -114,6 +114,22 @@ bool ReadGameIsRunning();
 // ss_stagebox_obj or ss_stage_header_obj exists; CSS uses cs_* objects instead.
 bool ReadIsMapSelection();
 
+// Proxy for the versus results screen. True when a live draw_result_screen
+// or result_screen_box exists. game_stage is not always 1039 here.
+bool ReadIsPostMatch();
+
+// Global gameplay_time (same value get_gameplay_time() returns).
+bool TryReadGameplayTime(double* out);
+
+// Frames left on the 3-2-1-GO countdown, estimated from gameplay_time.
+// 0 when not in a match, after GO, or if the timer cannot be read.
+double ReadCountdownRemaining();
+
+// True when a running match is actually accepting fight inputs: in a
+// gameplay room, not on results, gameplay has not stopped, and at least
+// one oPlayer has left PS_SPAWN (the countdown lock).
+bool ReadCanMakeInputs();
+
 // function to get the entire game state
 std::string BuildGameStateJson();
 

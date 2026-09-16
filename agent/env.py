@@ -25,7 +25,8 @@ FPS = 30
 def _normalize(value: float, lo: float, hi: float) -> float:
     val = 2.0 * (value - lo) / (hi - lo) - 1.0
     if val < -1.0 or val > 1.0: 
-        print(f"[RoaEnv] WARNING: value out of range: _normalize({value}, {lo}, {hi}) -> {val}")
+        val = np.clip(val, -1, 1)
+        # print(f"[RoaEnv] WARNING: value out of range: _normalize({value}, {lo}, {hi}) -> {val}")
     return val
 
 
@@ -121,8 +122,9 @@ class RoAEnv(gym.Env):
 
         # run the reset
         self.agent_index = self.reset_manager.random_agent_index()
+        print(f"[RoAEnv] agent index: {self.agent_index}")
         self.num_opponents = self.reset_manager.random_num_opponents()
-        self.active_indexes = self.reset_manager.random_active_indexes(self.agent_index, self.num_opponents)
+        self.active_indexes = [True, True, False, False] #self.reset_manager.random_active_indexes(self.agent_index, self.num_opponents)
         self.character_choices = self.reset_manager.random_character_choices(self.active_indexes)
         self.opponents = self.reset_manager.random_static_opponents(self.agent_index, self.active_indexes)
         self.player_stocks = self.reset_manager.random_player_stocks()
@@ -152,13 +154,13 @@ class RoAEnv(gym.Env):
         opponent_actions = []
         for opp_obs, index in opponent_observations:
             if self.active_indexes[index] == True and self.opponents[index] is not None:
-                action, _ = self.opponents[index].predict(opp_obs)
-                opponent_actions.append((action, index))
+                opp_action, _ = self.opponents[index].predict(opp_obs)
+                opponent_actions.append((opp_action, index))
 
         # apply actions
         self._apply_action(action, self.agent_index)
-        for action, player_index in opponent_actions:
-            self._apply_action(action, player_index)
+        for opp_action, player_index in opponent_actions:
+            self._apply_action(opp_action, player_index)
 
         # hold the actions for a fixed slice of real time
         time.sleep(self.step_duration)
@@ -179,6 +181,8 @@ class RoAEnv(gym.Env):
 
         # check for termination
         terminated = not truncated and self._is_terminal(curr_state)
+        if terminated:
+            print("[RoAEnv] match terminated")
 
         info = {}
         return obs, reward, terminated, truncated, info
@@ -196,12 +200,13 @@ class RoAEnv(gym.Env):
 
     def _is_terminal(self, state: dict) -> bool:
         game_running = self.bridge.get_game_is_running()
+        clock = state.get("game", {}).get("clock", 0.0)
         num_alive_players = 0
         for i in range(4):
             players = state.get("players", [])
             if i < len(players) and players[i].get("on", False) == True and players[i].get("stock", 0) > 0:
                 num_alive_players += 1
-        return not game_running or num_alive_players <= 1
+        return not game_running or num_alive_players <= 1 or clock <= 0.0
 
     def _apply_action(self, action, player_index):
         action = np.asarray(action, dtype=np.float32).reshape(-1)
@@ -240,10 +245,10 @@ class RoAEnv(gym.Env):
                     _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
                     _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
                     _normalize(float(p.get("url", 0.0)), 0.0, 19.0),
-                    _normalize(float(p.get("state", 0.0)), 0.0, 350.0),
-                    _normalize(float(p.get("state_timer", 0.0)), 0.0, 350.0),
-                    _normalize(float(p.get("prev_state", 0.0)), 0.0, 350.0),
-                    _normalize(float(p.get("prev_prev_state", 0.0)), 0.0, 350.0),
+                    _normalize(float(p.get("state", 0.0)), 0.0, 1024.0),
+                    _normalize(float(p.get("state_timer", 0.0)), 0.0, 1024.0),
+                    _normalize(float(p.get("prev_state", 0.0)), 0.0, 1024.0),
+                    _normalize(float(p.get("prev_prev_state", 0.0)), 0.0, 1024.0),
                     _normalize(float(p.get("attack", 0.0)), 0.0, 250.0),
                     _normalize(float(p.get("spr_dir", 0.0)), -1.0, 1.0),
                     _normalize(float(p.get("hsp", 0.0)), -250.0, 250.0),
@@ -327,4 +332,11 @@ class RoAEnv(gym.Env):
             _normalize(float(teams_enabled), 0.0, 1.0), 
         ])
 
-        return np.array(values, dtype=np.float32)
+        obs = np.array(values, dtype=np.float32)
+        expected = int(self.observation_space.shape[0])
+        if obs.shape[0] != expected:
+            raise ValueError(
+                f"obs length {obs.shape[0]} != observation_space {expected} "
+                f"(player block must emit {self.values_per_player} values)"
+            )
+        return obs

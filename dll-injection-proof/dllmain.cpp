@@ -569,6 +569,19 @@ DWORD WINAPI MainThread(LPVOID param) {
                 else if (command == "get_is_map_selection") {
                     response = ReadIsMapSelection() ? "1" : "0";
                 }
+                else if (command == "get_is_post_match") {
+                    response = ReadIsPostMatch() ? "1" : "0";
+                }
+                else if (command == "get_can_make_inputs") {
+                    response = ReadCanMakeInputs() ? "1" : "0";
+                }
+                else if (command == "get_countdown") {
+                    response = std::to_string(ReadCountdownRemaining());
+                }
+                else if (command == "get_gameplay_time") {
+                    double t = 0;
+                    response = TryReadGameplayTime(&t) ? std::to_string(t) : "error: gameplay_time not found";
+                }
                 else if (command.rfind("get_player_cursor_y", 0) == 0) {
                     int player = 0;
                     sscanf_s(command.c_str(), "get_player_cursor_y %d", &player);

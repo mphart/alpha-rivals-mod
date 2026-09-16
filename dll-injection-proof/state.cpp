@@ -951,6 +951,80 @@ bool ReadIsMapSelection() {
     return false;
 }
 
+// Versus results rooms instance draw_result_screen / result_screen_box.
+// Story mode uses chapter_results_object; include it so we don't miss
+// those rooms either. game_stage is not a stable id for this screen.
+bool ReadIsPostMatch() {
+    __try {
+        uintptr_t current = RoomListHead();
+        int scanned = 0;
+        while (current != 0 && scanned < kMaxRoomInstances) {
+            uint32_t flags = *(uint32_t*)(current + 0x74);
+            if ((flags & 0x3) == 0) {
+                if (InstanceObjectNameEquals(current, "draw_result_screen") ||
+                    InstanceObjectNameEquals(current, "result_screen_box") ||
+                    InstanceObjectNameEquals(current, "chapter_results_object"))
+                    return true;
+            }
+            current = *(uintptr_t*)(current + 0x130);
+            scanned++;
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return false;
+}
+
+static bool TryReadGlobalNumber(const char* name, double* out) {
+    if (!name || !out) return false;
+    uintptr_t global = GlobalInstance();
+    if (!global) return false;
+    int index = FindCustomVarIndex(name);
+    if (index < 0) return false;
+    uintptr_t rv = FindInstanceVarRValue(global, index);
+    return ReadRValueNumber(rv, out);
+}
+
+static bool GlobalNumberNonzero(const char* name) {
+    double v = 0;
+    return TryReadGlobalNumber(name, &v) && v != 0.0;
+}
+
+bool TryReadGameplayTime(double* out) {
+    return TryReadGlobalNumber("gameplay_time", out);
+}
+
+// 3 / 2 / 1 / GO are each shown for 30 frames (get_gameplay_time packed
+// slot 0xb6b). Fight inputs unlock as oPlayers leave PS_SPAWN at GO.
+static const double kCountdownUnlockFrames = 120.0;
+static const double kPsSpawn = 24.0;
+
+double ReadCountdownRemaining() {
+    if (!ReadGameIsRunning()) return 0;
+    double t = 0;
+    if (!TryReadGameplayTime(&t)) return 0;
+    if (t >= kCountdownUnlockFrames) return 0;
+    return kCountdownUnlockFrames - t;
+}
+
+bool ReadCanMakeInputs() {
+    if (!ReadGameIsRunning()) return false;
+    if (ReadIsPostMatch()) return false;
+    if (GlobalNumberNonzero("gameplay_has_stopped")) return false;
+    if (GlobalNumberNonzero("game_ending")) return false;
+
+    OPlayerState players[4];
+    ReadOPlayerInstances(players);
+    for (int i = 0; i < 4; ++i) {
+        if (!players[i].valid) continue;
+        if (!(players[i].have & (1u << kState))) continue;
+        if (players[i].state != kPsSpawn)
+            return true;
+    }
+    return false;
+}
+
 int ReadOPlayerInstances(OPlayerState out[4]) {
     if (!out) return 0;
     for (int i = 0; i < 4; ++i)

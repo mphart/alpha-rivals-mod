@@ -23,7 +23,7 @@ from env import RoAEnv
 RESUME_FROM_CHECKPOINT =  None
 
 TOTAL_TIMESTEPS = 100_000_000
-N_ENVS = 3  # one subprocess per injected game instance
+N_ENVS = 1  # one subprocess per injected game instance
 CHECKPOINT_EVERY = 50_000  # timesteps between checkpoint files
 
 

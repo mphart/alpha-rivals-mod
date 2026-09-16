@@ -176,6 +176,53 @@ class Bridge:
         """
         return self.send("get_is_map_selection").strip() != "0"
 
+    def get_is_post_match(self) -> bool:
+        """
+        Whether the post-match results screen appears to be up.
+
+        ``game_stage`` is not a stable id for this screen (it is not always
+        1039). There is no dedicated GML bool either. This wrapper uses a
+        room-instance proxy:
+
+        - ``True`` if a live ``draw_result_screen`` or ``result_screen_box``
+          exists (versus results), or ``chapter_results_object`` (story).
+        - ``False`` on CSS, stage select, in-match HUD, and other menus.
+        """
+        return self.send("get_is_post_match").strip() != "0"
+
+    def get_gameplay_time(self) -> float:
+        """
+        Frames since the match room started, including the 3-2-1-GO countdown.
+
+        Same value as GML ``get_gameplay_time()`` (global ``gameplay_time``).
+        """
+        return float(self.send("get_gameplay_time"))
+
+    def get_countdown(self) -> float:
+        """
+        Estimated frames left on the match-start 3-2-1-GO countdown.
+
+        Derived from ``gameplay_time`` (30 frames per beat, GO at 120).
+        Returns 0 when not in a match or after GO. Prefer
+        ``get_can_make_inputs`` to know when fight inputs are actually live.
+        """
+        return float(self.send("get_countdown"))
+
+    def get_can_make_inputs(self) -> bool:
+        """
+        Whether the running match is accepting fight inputs.
+
+        There is no durable GML ``can_make_inputs`` bool. During countdown
+        every ``oPlayer`` is locked in ``PS_SPAWN`` (24) and attack/special
+        processing is skipped. This wrapper is true when:
+
+        - a match is in progress (``gameplay_parent`` / ``oPlayer`` present)
+        - results are not up
+        - global ``gameplay_has_stopped`` / ``game_ending`` are not set
+        - at least one live ``oPlayer`` has left ``PS_SPAWN``
+        """
+        return self.send("get_can_make_inputs").strip() != "0"
+
     def dump_css(self) -> dict:
         """Dump cs_playerbg_obj instances (object 219) and their custom vars."""
         return json.loads(self.send("dump_css"))
@@ -277,6 +324,7 @@ if __name__ == "__main__":
     print("bridge1 connected to:", bridge1.pipe_name)
     print(bridge1.set_player_choice(0, 3))
     print("readback:", bridge1.get_player_choice(0))
+    print("game stage:", bridge1.get_game_stage())
 
     # print(bridge1.set_joy_button(0, "a", True))
     # print(bridge1.set_joy_button(1, "a", True))
