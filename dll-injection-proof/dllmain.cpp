@@ -628,7 +628,12 @@ DWORD WINAPI MainThread(LPVOID param) {
                     int player = 0;
                     int val = 0;
                     sscanf_s(command.c_str(), "set_player_stock %d %d", &player, &val);
-                    response = std::to_string(WritePlayerStock(player, static_cast<double>(val)));
+                    if (player < 0 || player > 3) {
+                        response = "error: player must be 0-3";
+                    }
+                    else {
+                        response = std::to_string(WritePlayerStock(player, static_cast<double>(val)));
+                    }
                 }
                 else if (command.rfind("set_player_percent", 0) == 0) {
                     int player = 0;

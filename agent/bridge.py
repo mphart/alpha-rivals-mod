@@ -127,6 +127,17 @@ class Bridge:
         raw = self.send("get_stock")
         return [float(x) for x in raw.split()]
 
+    def set_player_stocks(self, player: int, stocks: int) -> float:
+        """
+        Write stock count for slot player (0-3).
+        Uses existing ``set_player_stock`` / WritePlayerStock. Returns the value written.
+        """
+        raw = self._require_ok(
+            self.send(f"set_player_stock {player} {int(stocks)}"),
+            "set_player_stock",
+        )
+        return float(raw)
+
     def get_game_stage(self) -> float:
         """Read the current stage id (ReadGameStage)."""
         return float(self.send("get_game_stage"))

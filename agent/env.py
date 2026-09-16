@@ -10,7 +10,6 @@ import time
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
-from stable_baselines3 import PPO
 
 from bridge import Bridge
 from reward import RewardManager
@@ -24,7 +23,10 @@ FPS = 30
 
 
 def _normalize(value: float, lo: float, hi: float) -> float:
-    return 2.0 * (value - lo) / (hi - lo) - 1.0
+    val = 2.0 * (value - lo) / (hi - lo) - 1.0
+    if val < -1.0 or val > 1.0: 
+        print(f"[RoaEnv] WARNING: value out of range: _normalize({value}, {lo}, {hi}) -> {val}")
+    return val
 
 
 class RoAEnv(gym.Env):
@@ -44,14 +46,22 @@ class RoAEnv(gym.Env):
         self.step_duration = step_duration
         self.max_episode_steps = max_episode_steps
 
+        # reset
+        self.agent_index = 0
         self.num_opponents = 0
         self.opponents = []
-        self.agent_index = 0
+        self.character_choices = []
+        self.active_indexes = []
+        self.player_stocks = []
+        
+        # info & tracking
         self.prev_state = None
         self.steps_this_episode = 0
         self.prev_buttons_held = {
             0: {f: False for f in BUTTON_FIELDS},
             1: {f: False for f in BUTTON_FIELDS},
+            2: {f: False for f in BUTTON_FIELDS},
+            3: {f: False for f in BUTTON_FIELDS},
         }
 
         # ---- Action space ----
@@ -73,19 +83,19 @@ class RoAEnv(gym.Env):
         # Flattened from bridge.get_state()
         self.num_game_values = 4
 
-        self.values_per_player = 25
         self.num_player_slots = 4
+        self.values_per_player = 25
 
-        self.num_projectile_slots = 8
+        self.num_projectile_slots = 10
         self.values_per_projectile = 6
 
-        self.num_ground_fire_slots = 6
+        self.num_ground_fire_slots = self.num_player_slots * 3
         self.values_per_ground_fire = 3
 
-        self.num_bubble_slots = 60
+        self.num_bubble_slots = 200
         self.values_per_bubble = 5
 
-        self.num_puddle_slots = 60
+        self.num_puddle_slots = self.num_player_slots
         self.values_per_puddle = 3
 
         obs_dim = (
@@ -109,13 +119,15 @@ class RoAEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
-        self._release_all_joysticks()
-
+        # run the reset
         self.agent_index = self.reset_manager.random_agent_index()
         self.num_opponents = self.reset_manager.random_num_opponents()
-        self.opponents = self.reset_manager.random_static_opponents(self.agent_index, self.num_opponents)
+        self.active_indexes = self.reset_manager.random_active_indexes(self.agent_index, self.num_opponents)
+        self.character_choices = self.reset_manager.random_character_choices(self.active_indexes)
+        self.opponents = self.reset_manager.random_static_opponents(self.agent_index, self.active_indexes)
+        self.player_stocks = self.reset_manager.random_player_stocks()
 
-        self.reset_manager.reset()
+        self.reset_manager.restart_match(self.agent_index, self.character_choices, self.player_stocks)
 
         # get the initial state
         state = self.bridge.get_state()
@@ -128,32 +140,46 @@ class RoAEnv(gym.Env):
 
     def step(self, action):
 
-        # get opponent action
-        action_opponent = None
-        if self.opponent_model is not None:
-            obs_opponent = self._state_to_obs(self.prev_state, self.opponent_player_index)
-            action_opponent, _ = self.opponent_model.predict(
-                obs_opponent, deterministic=True
-            )
+        # get opponent observations
+        opponent_observations = []
+        for i in range(4):
+            if self.active_indexes[i] == True and self.opponents[i] is not None:
+                # (observation, player_index)
+                observation = self._state_to_obs(self.prev_state, i)
+                opponent_observations.append((observation, i))
+
+        # get opponent action(s)
+        opponent_actions = []
+        for opp_obs, index in opponent_observations:
+            if self.active_indexes[index] == True and self.opponents[index] is not None:
+                action, _ = self.opponents[index].predict(opp_obs)
+                opponent_actions.append((action, index))
 
         # apply actions
-        self._apply_action(action, self.self_player_index)
-        if action_opponent is not None:
-            self._apply_action(action_opponent, self.opponent_player_index)
+        self._apply_action(action, self.agent_index)
+        for action, player_index in opponent_actions:
+            self._apply_action(action, player_index)
 
-        # Hold the action for a fixed slice of real time
+        # hold the actions for a fixed slice of real time
         time.sleep(self.step_duration)
 
         # get the new state
         curr_state = self.bridge.get_state()
-        obs = self._state_to_obs(curr_state, self.self_player_index)
+        obs = self._state_to_obs(curr_state, self.agent_index)
 
         # compute the reward
-        reward, terminated = self.reward_manager.compute_reward(self.prev_state, curr_state, self.self_player_index, self.opponent_player_index)
+        reward = self.reward_manager.compute_reward(self.prev_state, curr_state, self.agent_index)
         self.prev_state = curr_state
 
-        self._steps_this_episode += 1
-        truncated = self._steps_this_episode >= self.max_episode_steps
+        # check for truncation
+        self.steps_this_episode += 1
+        truncated = self.steps_this_episode >= self.max_episode_steps
+        if truncated:
+            self.reset_manager.quit_match(self.agent_index)
+
+        # check for termination
+        terminated = not truncated and self._is_terminal(curr_state)
+
         info = {}
         return obs, reward, terminated, truncated, info
 
@@ -168,11 +194,19 @@ class RoAEnv(gym.Env):
     # Helpers
     # ------------------------------------------------------------------
 
+    def _is_terminal(self, state: dict) -> bool:
+        game_running = self.bridge.get_game_is_running()
+        num_alive_players = 0
+        for i in range(4):
+            players = state.get("players", [])
+            if i < len(players) and players[i].get("on", False) == True and players[i].get("stock", 0) > 0:
+                num_alive_players += 1
+        return not game_running or num_alive_players <= 1
+
     def _apply_action(self, action, player_index):
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         num_buttons = len(BUTTON_FIELDS)
-        prev = self._prev_buttons_held[player_index]
-        self.bridge.set_joy_override(player_index, True)
+        prev = self.prev_buttons_held[player_index]
 
         for i, field in enumerate(BUTTON_FIELDS):
             down = bool(action[i] > 0)
@@ -186,8 +220,8 @@ class RoAEnv(gym.Env):
             self.bridge.set_joy_axis(player_index, field, value)
 
     def _release_all_joysticks(self):
-        for player_index in (0, 1):
-            prev = self._prev_buttons_held[player_index]
+        for player_index in range(4):
+            prev = self.prev_buttons_held[player_index]
             for field in BUTTON_FIELDS:
                 prev[field] = False
             self.bridge.release_joy(player_index)
@@ -273,11 +307,11 @@ class RoAEnv(gym.Env):
         puddles = state.get("puddles", [])
         for i in range(self.num_puddle_slots):
             if i < len(puddles):
-                p = puddles[i]
+                puddle = puddles[i]
                 values.extend([
-                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
+                    _normalize(float(puddle.get("x", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(puddle.get("y", 0.0)), -1500.0, 1500.0),
+                    _normalize(float(puddle.get("player", 0.0)), 0.0, 4.0),
                 ])
             else:
                 values.extend([0.0] * self.values_per_puddle)
