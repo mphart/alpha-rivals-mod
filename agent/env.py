@@ -14,20 +14,13 @@ from gymnasium import spaces
 from bridge import Bridge
 from reward import RewardManager
 from reset import ResetManager
+from obs import ObservationManager
 
 BUTTON_FIELDS = ["a", "b", "x", "y", "lb", "dup"] 
 STICK_FIELDS = ["lx", "ly"]
 STICK_MAX = 32767
 
 FPS = 30
-
-
-def _normalize(value: float, lo: float, hi: float) -> float:
-    val = 2.0 * (value - lo) / (hi - lo) - 1.0
-    if val < -1.0 or val > 1.0: 
-        val = np.clip(val, -1, 1)
-        # print(f"[RoaEnv] WARNING: value out of range: _normalize({value}, {lo}, {hi}) -> {val}")
-    return val
 
 
 class RoAEnv(gym.Env):
@@ -43,6 +36,7 @@ class RoAEnv(gym.Env):
         self.bridge = Bridge()
         self.reward_manager = RewardManager()
         self.reset_manager = ResetManager(self.bridge)
+        self.obs_manager = ObservationManager()
 
         self.step_duration = step_duration
         self.max_episode_steps = max_episode_steps
@@ -80,36 +74,7 @@ class RoAEnv(gym.Env):
             dtype=np.float32,
         )
 
-        # ---- Observation space ----
-        # Flattened from bridge.get_state()
-        self.num_game_values = 4
-
-        self.num_player_slots = 4
-        self.values_per_player = 25
-
-        self.num_projectile_slots = 10
-        self.values_per_projectile = 6
-
-        self.num_ground_fire_slots = self.num_player_slots * 3
-        self.values_per_ground_fire = 3
-
-        self.num_bubble_slots = 200
-        self.values_per_bubble = 5
-
-        self.num_puddle_slots = self.num_player_slots
-        self.values_per_puddle = 3
-
-        obs_dim = (
-            self.num_player_slots * self.values_per_player
-            + self.num_projectile_slots * self.values_per_projectile
-            + self.num_ground_fire_slots * self.values_per_ground_fire
-            + self.num_bubble_slots * self.values_per_bubble
-            + self.num_puddle_slots * self.values_per_puddle
-            + self.num_game_values
-        )
-        self.observation_space = spaces.Box(
-            low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32
-        )
+        self.observation_space = self.obs_manager.get_obs_space()
 
         print(f"[RoAEnv] connected to {self.bridge.pipe_name}", flush=True)
 
@@ -119,6 +84,8 @@ class RoAEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+
+        self._reset_all_inputs()
 
         # run the reset
         self.agent_index = self.reset_manager.random_agent_index()
@@ -133,7 +100,7 @@ class RoAEnv(gym.Env):
 
         # get the initial state
         state = self.bridge.get_state()
-        obs = self._state_to_obs(state, self.agent_index)
+        obs = self.obs_manager.get_obs(state, self.agent_index)
         self.prev_state = state
         self.steps_this_episode = 0
 
@@ -147,7 +114,7 @@ class RoAEnv(gym.Env):
         for i in range(4):
             if self.active_indexes[i] == True and self.opponents[i] is not None:
                 # (observation, player_index)
-                observation = self._state_to_obs(self.prev_state, i)
+                observation = self.obs_manager.get_obs(self.prev_state, i)
                 opponent_observations.append((observation, i))
 
         # get opponent action(s)
@@ -167,7 +134,7 @@ class RoAEnv(gym.Env):
 
         # get the new state
         curr_state = self.bridge.get_state()
-        obs = self._state_to_obs(curr_state, self.agent_index)
+        obs = self.obs_manager.get_obs(curr_state, self.agent_index)
 
         # compute the reward
         reward = self.reward_manager.compute_reward(self.prev_state, curr_state, self.agent_index)
@@ -223,6 +190,13 @@ class RoAEnv(gym.Env):
             raw = float(np.clip(action[num_buttons + j], -1.0, 1.0))
             value = int(round(raw * STICK_MAX))
             self.bridge.set_joy_axis(player_index, field, value)
+    
+    def _reset_all_inputs(self):
+        for player_index in range(4):
+            for field in BUTTON_FIELDS:
+                self.bridge.set_joy_button(player_index, field, False)
+            for field in STICK_FIELDS:
+                self.bridge.set_joy_axis(player_index, field, 0)
 
     def _release_all_joysticks(self):
         for player_index in range(4):
@@ -230,113 +204,3 @@ class RoAEnv(gym.Env):
             for field in BUTTON_FIELDS:
                 prev[field] = False
             self.bridge.release_joy(player_index)
-
-    def _state_to_obs(self, state: dict, player_index: int) -> np.ndarray:
-        values = []
-
-        players = state.get("players", [])
-        for i in range(self.num_player_slots):
-            if i < len(players) and players[i].get("on", False):
-                p = players[i]
-                values.extend([
-                    1.0, # on
-                    _normalize(float(p.get("percent", 0.0)), 0.0, 999.0),
-                    _normalize(float(p.get("stock", 0.0)), 0.0, 99.0),
-                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("url", 0.0)), 0.0, 19.0),
-                    _normalize(float(p.get("state", 0.0)), 0.0, 1024.0),
-                    _normalize(float(p.get("state_timer", 0.0)), 0.0, 1024.0),
-                    _normalize(float(p.get("prev_state", 0.0)), 0.0, 1024.0),
-                    _normalize(float(p.get("prev_prev_state", 0.0)), 0.0, 1024.0),
-                    _normalize(float(p.get("attack", 0.0)), 0.0, 250.0),
-                    _normalize(float(p.get("spr_dir", 0.0)), -1.0, 1.0),
-                    _normalize(float(p.get("hsp", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("vsp", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("has_walljump", 0.0)), 0.0, 1.0),
-                    _normalize(float(p.get("has_airdodge", 0.0)), 0.0, 1.0),
-                    _normalize(float(p.get("djumps", 0.0)), 0.0, 3.0),
-                    _normalize(float(p.get("attack_invince", 0.0)), 0.0, 500.0),
-                    _normalize(float(p.get("respawn_invince_time", 0.0)), 0.0, 500.0),
-                    _normalize(float(p.get("hitstop", 0.0)), 0.0, 100.0),
-                    _normalize(float(p.get("hitstop_full", 0.0)), 0.0, 100.0),
-                    _normalize(float(p.get("strong_charge", 0.0)), 0, 60),
-                    _normalize(float(p.get("window", 0.0)), 0, 50.0),
-                    _normalize(float(p.get("window_timer", 0.0)), 0, 100.0),
-                    _normalize(float(p.get("burn_timer", 0.0)), 0, 150.0),
-                ])
-            else:
-                values.extend([0.0] * self.values_per_player)
-
-        projectiles = state.get("projectiles", [])
-        for i in range(self.num_projectile_slots):
-            if i < len(projectiles):
-                p = projectiles[i]
-                values.extend([
-                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("hsp", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("vsp", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("spr_dir", 0.0)), -1.0, 1.0),
-                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
-                ])
-            else:
-                values.extend([0.0] * self.values_per_projectile)
-
-        ground_fires = state.get("ground_fires") or state.get("ground") or []
-        for i in range(self.num_ground_fire_slots):
-            if i < len(ground_fires):
-                p = ground_fires[i]
-                values.extend([
-                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
-                ])
-            else:
-                values.extend([0.0] * self.values_per_ground_fire)
-
-        bubbles = state.get("bubbles", [])
-        for i in range(self.num_bubble_slots):
-            if i < len(bubbles):
-                p = bubbles[i]
-                values.extend([
-                    _normalize(float(p.get("x", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("y", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(p.get("hsp", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("vsp", 0.0)), -250.0, 250.0),
-                    _normalize(float(p.get("player", 0.0)), 0.0, 4.0),
-                ])
-            else:
-                values.extend([0.0] * self.values_per_bubble)
-
-        puddles = state.get("puddles", [])
-        for i in range(self.num_puddle_slots):
-            if i < len(puddles):
-                puddle = puddles[i]
-                values.extend([
-                    _normalize(float(puddle.get("x", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(puddle.get("y", 0.0)), -1500.0, 1500.0),
-                    _normalize(float(puddle.get("player", 0.0)), 0.0, 4.0),
-                ])
-            else:
-                values.extend([0.0] * self.values_per_puddle)
-
-        game = state.get("game", {})
-        stage = game.get("stage", 939)
-        clock = game.get("clock", 0.0)
-        teams_enabled = game.get("teams_enabled", 0.0)
-        values.extend([
-            _normalize(float(player_index), 0.0, 4.0),
-            _normalize(float(stage), 939.0, 1200.0),
-            _normalize(float(clock), 0.0, 360_000.0),
-            _normalize(float(teams_enabled), 0.0, 1.0), 
-        ])
-
-        obs = np.array(values, dtype=np.float32)
-        expected = int(self.observation_space.shape[0])
-        if obs.shape[0] != expected:
-            raise ValueError(
-                f"obs length {obs.shape[0]} != observation_space {expected} "
-                f"(player block must emit {self.values_per_player} values)"
-            )
-        return obs
