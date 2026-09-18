@@ -71,19 +71,61 @@ bool InjectDll(DWORD pid, const std::string& dllPath) {
 
     WaitForSingleObject(hThread, INFINITE);
 
-    DWORD exitCode;
+    DWORD exitCode = 0;
     GetExitCodeThread(hThread, &exitCode);
-    if (exitCode == 0) {
-        std::cout << "LoadLibrary failed inside target process (module not loaded).\n";
-    }
-    else {
-        std::cout << "LoadLibrary succeeded, module base: 0x" << std::hex << exitCode << "\n";
-    }
-
     CloseHandle(hThread);
     VirtualFreeEx(hProcess, remotePath, 0, MEM_RELEASE);
     CloseHandle(hProcess);
+
+    // LoadLibraryA's return value is the thread exit code. 0 means the DLL
+    // path was missing, the image is the wrong architecture, or DllMain failed.
+    if (exitCode == 0) {
+        std::cerr << "LoadLibrary failed inside target process (module not loaded).\n";
+        return false;
+    }
+
+    std::cout << "LoadLibrary succeeded, module base: 0x" << std::hex << exitCode << std::dec << "\n";
     return true;
+}
+
+static bool FileExists(const std::string& path) {
+    DWORD attr = GetFileAttributesA(path.c_str());
+    return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+static std::string NormalizePath(const std::string& path) {
+    char full[MAX_PATH] = {};
+    if (!GetFullPathNameA(path.c_str(), MAX_PATH, full, NULL))
+        return path;
+    return full;
+}
+
+static std::string ExeDirectory() {
+    char exePath[MAX_PATH] = {};
+    GetModuleFileNameA(NULL, exePath, MAX_PATH);
+    std::string dir(exePath);
+    size_t slash = dir.find_last_of("\\/");
+    if (slash != std::string::npos)
+        dir.resize(slash);
+    return dir;
+}
+
+// Solution Debug|Win32 writes both the injector and the payload to
+// <repo>\Debug\. The nested dll-injection-proof\Debug folder is IntDir
+// (objs / .recipe), not the linked DLL.
+static std::string FindDllPath() {
+    const std::string exeDir = ExeDirectory();
+    const std::string candidates[] = {
+        exeDir + "\\alpha-rivals-mod.dll",
+        exeDir + "\\..\\Debug\\alpha-rivals-mod.dll",
+        exeDir + "\\..\\dll-injection-proof\\Debug\\alpha-rivals-mod.dll",
+    };
+    for (const std::string& raw : candidates) {
+        std::string full = NormalizePath(raw);
+        if (FileExists(full))
+            return full;
+    }
+    return {};
 }
 
 std::vector<DWORD> GetAllProcessIdsByName(const std::wstring& processName) {
@@ -111,8 +153,16 @@ int main() {
     }
     std::cout << "Found " << pids.size() << " process(es).\n";
 
-    std::string dllPath = "C:\\Users\\mhart\\source\\repos\\dll-injection-proof\\dll-injection-proof\\Debug\\alpha-rivals-mod.dll";
+    std::string dllPath = FindDllPath();
+    if (dllPath.empty()) {
+        std::cerr << "alpha-rivals-mod.dll not found. Build alpha-rivals-mod "
+                     "(Debug|Win32) and run this injector from the same Debug folder.\n"
+                  << "Looked next to: " << ExeDirectory() << "\n";
+        return 1;
+    }
+    std::cout << "DLL: " << dllPath << "\n";
 
+    int failures = 0;
     for (DWORD pid : pids) {
         std::cout << "Injecting into PID: " << pid << "\n";
         if (InjectDll(pid, dllPath)) {
@@ -120,7 +170,8 @@ int main() {
         }
         else {
             std::cout << "  Injection failed.\n";
+            failures++;
         }
     }
-    return 0;
+    return failures ? 1 : 0;
 }

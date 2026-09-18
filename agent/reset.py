@@ -107,6 +107,7 @@ class ResetManager():
 
                 case GameState.MAP_SELECT:
                     self._tap_direction("dleft", self_index, 0.1, 0.5)
+                    self._tap_direction("dup", self_index, 0.15, 0.5)
                     self._press_all(open_indexes, "a", 0.05, 0.1)
 
                 case GameState.UNACTIONABLE:
@@ -119,7 +120,7 @@ class ResetManager():
                             self.bridge.set_player_stocks(i, player_stocks[i])
                     print("[RoAEnv] match started")
                     # wait for countdown
-                    deadline = time.time() + 10.0
+                    deadline = time.time() + 3.0
                     while not self.bridge.get_can_make_inputs():
                         if time.time() >= deadline:
                             print("[RoAEnv] timed out waiting for match inputs")

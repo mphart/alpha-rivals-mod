@@ -321,10 +321,14 @@ class Bridge:
 
 if __name__ == "__main__":
     bridge1 = Bridge()
-    print("bridge1 connected to:", bridge1.pipe_name)
-    print(bridge1.set_player_choice(0, 3))
-    print("readback:", bridge1.get_player_choice(0))
-    print("game stage:", bridge1.get_game_stage())
+
+
+
+    print(bridge1.get_state())
+    # print("bridge1 connected to:", bridge1.pipe_name)
+    # print(bridge1.set_player_choice(0, 3))
+    # print("readback:", bridge1.get_player_choice(0))
+    # print("game stage:", bridge1.get_game_stage())
 
     # print(bridge1.set_joy_button(0, "a", True))
     # print(bridge1.set_joy_button(1, "a", True))

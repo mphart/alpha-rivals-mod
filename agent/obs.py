@@ -65,7 +65,7 @@ OBS_DIM = 578
 
 class ObservationManager:
     def __init__(self):
-        self.num_game_values = 2
+        self.num_game_values = 20
         self.num_player_slots = 4
         self.num_active_player_slots = 2
         self.values_per_active_player = 25
@@ -109,6 +109,7 @@ class ObservationManager:
             self._normalize(float(game.get("stage", MIN_STAGE)), MIN_STAGE, MAX_STAGE),
             self._normalize(float(game.get("clock", 0.0)), 0.0, MAX_CLOCK),
         ]
+        values.extend([0] * 18) # for now, empty values, we'll add them later
 
         players = state.get("players", [])
         target_player = self._player_at(players, target_player_index)

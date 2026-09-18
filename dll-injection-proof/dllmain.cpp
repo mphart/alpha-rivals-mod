@@ -908,10 +908,10 @@ DWORD WINAPI MainThread(LPVOID param) {
                 }
 
                 WriteFile(pipe, response.c_str(), (DWORD)response.size(), NULL, NULL);
-                if (command.rfind("dump_vars", 0) == 0 || command == "dump_css")
-                    Log(command + " bytes=" + std::to_string(response.size()));
-                else
-                    Log(response);
+                //if (command.rfind("dump_vars", 0) == 0 || command == "dump_css")
+                //    Log(command + " bytes=" + std::to_string(response.size()));
+                //else
+                //    Log(response);
             }
 
             Log("Client disconnected.");

@@ -66,7 +66,6 @@ double ReadPlayerStock(int player) {
 }
 
 double ReadPlayerTeam(int player) {
-    //Log("ReadPlayerTeam(" + std::to_string(player) + ")");
     return ReadPlayerValue(player, {
         0x05C4A8D8, 0x2C, 0x10, 0x198, 0x10, 0x24, 0xC, 0x1810
     });
