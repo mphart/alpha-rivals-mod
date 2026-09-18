@@ -8,8 +8,8 @@ Here is the structure of an observation for player_index p:
 
 game
 --------------------------------
-0: stage_id
-1: clock
+0: clock
+1-19: game stage values (stage id in slot 1; rest reserved)
 --------------------------------
 
 player p
@@ -29,7 +29,7 @@ other player
 1 puddle x 2 values
 60 bubbles x 4 values
 --------------------------------
-Total: 578 values
+Total: 596 values
 """
 
 import numpy as np
@@ -41,7 +41,7 @@ MAX_X = 2500.0
 MAX_Y = 2500.0
 MAX_HSP = 250.0
 MAX_VSP = 250.0
-MAX_WINDOW = 50.0
+MAX_WINDOW = 100.0
 MAX_WINDOW_TIMER = 600.0
 MAX_BURN_TIMER = 151.0
 MAX_DJUMPS = 3.0
@@ -57,10 +57,13 @@ MAX_CLOCK = 360_000.0
 MAX_ATTACK = 250.0
 MAX_STATE = 1024.0
 
+LEFT = -1.0
+RIGHT = 1.0
+
 TRUE = 1.0
 FALSE = 0.0
 
-OBS_DIM = 578
+OBS_DIM = 596
 
 
 class ObservationManager:
@@ -105,11 +108,14 @@ class ObservationManager:
 
     def get_obs(self, state: dict, target_player_index: int) -> np.ndarray:
         game = state.get("game", {})
+        stage_slots = [0.0] * 19
+        stage_slots[0] = self._normalize(
+            float(game.get("stage", MIN_STAGE)), MIN_STAGE, MAX_STAGE
+        )
         values = [
-            self._normalize(float(game.get("stage", MIN_STAGE)), MIN_STAGE, MAX_STAGE),
             self._normalize(float(game.get("clock", 0.0)), 0.0, MAX_CLOCK),
+            *stage_slots,
         ]
-        values.extend([0] * 18) # for now, empty values, we'll add them later
 
         players = state.get("players", [])
         target_player = self._player_at(players, target_player_index)
@@ -227,7 +233,7 @@ class ObservationManager:
 
     def _get_player_values(self, player: dict) -> list:
         return [
-            self._normalize(float(player.get("on", FALSE)), 0.0, TRUE),
+            self._normalize(float(player.get("on", 0.0)), FALSE, TRUE),
             self._normalize(float(player.get("percent", 0.0)), 0.0, MAX_PERCENT),
             self._normalize(float(player.get("stock", 0.0)), 0.0, MAX_STOCK),
             self._normalize(float(player.get("x", 0.0)), -MAX_X, MAX_X),
@@ -238,7 +244,7 @@ class ObservationManager:
             self._normalize(float(player.get("prev_state", 0.0)), 0.0, MAX_STATE),
             self._normalize(float(player.get("prev_prev_state", 0.0)), 0.0, MAX_STATE),
             self._normalize(float(player.get("attack", 0.0)), 0.0, MAX_ATTACK),
-            self._normalize(float(player.get("spr_dir", 0.0)), -1.0, 1.0),
+            self._normalize(float(player.get("spr_dir", 0.0)), LEFT, RIGHT),
             self._normalize(float(player.get("hsp", 0.0)), -MAX_HSP, MAX_HSP),
             self._normalize(float(player.get("vsp", 0.0)), -MAX_VSP, MAX_VSP),
             self._normalize(float(player.get("has_walljump", 0.0)), FALSE, TRUE),
@@ -260,7 +266,7 @@ class ObservationManager:
             self._normalize(float(projectile.get("y", 0.0)), -MAX_Y, MAX_Y),
             self._normalize(float(projectile.get("hsp", 0.0)), -MAX_HSP, MAX_HSP),
             self._normalize(float(projectile.get("vsp", 0.0)), -MAX_VSP, MAX_VSP),
-            self._normalize(float(projectile.get("spr_dir", 0.0)), -1.0, 1.0),
+            self._normalize(float(projectile.get("spr_dir", 0.0)), LEFT, RIGHT),
         ]
 
     def _get_fire_values(self, fire: dict) -> list:

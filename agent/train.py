@@ -24,7 +24,7 @@ RESUME_FROM_CHECKPOINT =  None
 
 TOTAL_TIMESTEPS = 100_000_000
 N_ENVS = 3  # one subprocess per injected game instance
-CHECKPOINT_EVERY = 50_000  # timesteps between checkpoint files
+CHECKPOINT_EVERY = 100_000  # timesteps between checkpoint files
 
 
 def main():
@@ -37,7 +37,7 @@ def main():
 
     kwargs = dict(
         net_arch=[512, 256, 256],
-        activation_fn=nn.Tanh,
+        activation_fn=nn.ReLU,
         ortho_init=True,
     )
 

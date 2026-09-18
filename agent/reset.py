@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 from enum import Enum
 from stable_baselines3 import PPO
+from input import InputManager
 
 AGENT_DIR = Path(__file__).resolve().parent
 CHECKPOINT_DIR = AGENT_DIR / "checkpoints"
@@ -24,6 +25,7 @@ class GameState(Enum):
 class ResetManager():
     def __init__(self, bridge: Bridge):
         self.bridge = bridge
+        self.input_manager = InputManager(self.bridge)
 
     # pick a random agent index from [0, 3]
     def random_agent_index(self) -> int:
@@ -86,11 +88,11 @@ class ResetManager():
 
             match game_state:
                 case GameState.POST_MATCH:
-                    self._press_all(open_indexes, "a", 0.05, 0.0)
+                    self.input_manager.press_all(open_indexes, "a", 0.05, 0.0)
 
                 case GameState.CHARACTER_SELECT:
                     # claim menu pads
-                    self._claim_menu_pads(open_indexes)
+                    self.input_manager.claim_menu_pads(open_indexes)
                     # set players on/off
                     for i in range(len(open_indexes)):
                         if open_indexes[i] == True:
@@ -102,16 +104,16 @@ class ResetManager():
                         if character_choices[i] != 0:
                             self.bridge.set_player_choice(i, character_choices[i])
                     # start match button
-                    self._press("start", self_index, 0.05, 0.1)
+                    self.input_manager.press("start", self_index, 0.05, 0.1)
                     time.sleep(1)
 
                 case GameState.MAP_SELECT:
-                    self._tap_direction("dleft", self_index, 0.1, 0.5)
-                    self._tap_direction("dup", self_index, 0.15, 0.5)
-                    self._press_all(open_indexes, "a", 0.05, 0.1)
+                    self.input_manager.tap_direction("dleft", self_index, 0.1, 0.5)
+                    self.input_manager.tap_direction("dup", self_index, 0.15, 0.5)
+                    self.input_manager.press_all(open_indexes, "a", 0.05, 0.1)
 
                 case GameState.UNACTIONABLE:
-                    time.sleep(0.01)
+                    time.sleep(0.1)
 
                 case GameState.MATCH:
                     # set player stocks
@@ -134,12 +136,11 @@ class ResetManager():
 
     def quit_match(self, self_index: int) -> bool:
         try:
-            self._press("start", self_index, 0.05, 1)
-            self._tap_direction("ddown", self_index, 0.05, 0.15)
-            self._tap_direction("ddown", self_index, 0.05, 0.15)
-            self._press("a", self_index, 0.05, 0.0)
-            self._tap_direction("ddown", self_index, 0.05, 0.15)
-            self._press("a", self_index, 0.05, 0.0)
+            self.input_manager.press("start", self_index, 0.05, 1.5)
+            self.input_manager.tap_direction("dup", self_index, 0.05, 0.1)
+            self.input_manager.press("a", self_index, 0.05, 1.0)
+            self.input_manager.tap_direction("dup", self_index, 0.05, 0.1)
+            self.input_manager.press("a", self_index, 0.05, 0.0)
             return True
         except:
             return False
@@ -199,37 +200,6 @@ class ResetManager():
         # default to idle opponent
         print("[RoAEnv] opponent will idle")
         return None
-
-    # claim menu pads for the given indexes, or all 4 of them by default
-    def _claim_menu_pads(self, indexes: list[bool] = [True, True, True, True]):
-        for i, index in enumerate(indexes):
-            if index:
-                self.bridge.set_joy_override(i, True)
-
-    # release all menu pads
-    def _release_menu_pads(self):
-        for i in range(4):
-            self.bridge.release_joy(i)
-
-    # tap a direction on the menu cursor
-    def _tap_direction(self, field: str, joy_index: int, hold_seconds: float, wait_after: float):
-        self.bridge.set_joy_button(joy_index, field, True)
-        time.sleep(hold_seconds)
-        self.bridge.set_joy_button(joy_index, field, False)
-        time.sleep(wait_after)
-
-    # press a button
-    def _press(self, field: str, joy_index: int, hold_seconds: float, wait_after: float):
-        self.bridge.set_joy_button(joy_index, field, True)
-        time.sleep(hold_seconds)
-        self.bridge.set_joy_button(joy_index, field, False)
-        time.sleep(wait_after)
-
-    # press a button for all indexes that are True
-    def _press_all(self, indexes: list[bool], field: str, hold_seconds: float, wait_after: float):
-        for i, index in enumerate(indexes):
-            if index:
-                self._press(field, i, hold_seconds, wait_after)
 
 
 if __name__ == "__main__":
