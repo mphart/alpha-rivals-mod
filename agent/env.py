@@ -6,10 +6,7 @@ Self play implementation
 """
 
 import time
-
-import numpy as np
 import gymnasium as gym
-from gymnasium import spaces
 
 from bridge import Bridge
 from reward import RewardManager
@@ -32,9 +29,9 @@ class RoAEnv(gym.Env):
 
         self.bridge = Bridge()
         self.reward_manager = RewardManager()
-        self.reset_manager = ResetManager(self.bridge)
-        self.obs_manager = ObservationManager()
         self.input_manager = InputManager(self.bridge)
+        self.reset_manager = ResetManager(self.bridge, self.input_manager)
+        self.obs_manager = ObservationManager()
 
         self.step_duration = step_duration
         self.max_episode_steps = max_episode_steps

@@ -23,9 +23,9 @@ class GameState(Enum):
 
 
 class ResetManager():
-    def __init__(self, bridge: Bridge):
+    def __init__(self, bridge: Bridge, input_manager: InputManager):
         self.bridge = bridge
-        self.input_manager = InputManager(self.bridge)
+        self.input_manager = input_manager
 
     # pick a random agent index from [0, 3]
     def random_agent_index(self) -> int:
@@ -74,7 +74,7 @@ class ResetManager():
     # takes the list of character choices 0 = off, 1 = random, 2 = zetterburn, etc.
     # starts the match with the given character choices
     def restart_match(self, self_index: int = 0, character_choices: list = [0, 0, 0, 0], player_stocks: list[int] = [3, 3, 3, 3]) -> bool:
-        
+
         # make a list of player slots that should be open
         open_indexes = [False] * 4
         open_indexes[self_index] = True
@@ -204,7 +204,8 @@ class ResetManager():
 
 if __name__ == "__main__":
     bridge = Bridge()
-    reset_manager = ResetManager(bridge)
+    input_manager = InputManager(bridge)
+    reset_manager = ResetManager(bridge, input_manager)
 
     # random agent index
     print("Random agent index:")

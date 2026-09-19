@@ -72,7 +72,7 @@ class InputManager:
             prev = self.prev_buttons_held[player_index]
             for field in BUTTON_FIELDS:
                 prev[field] = False
-            self.bridge.release_joy(i)
+            self.bridge.release_joy(player_index)
 
     # tap a direction on the menu cursor
     def tap_direction(self, field: str, joy_index: int, hold_seconds: float, wait_after: float):
@@ -92,7 +92,15 @@ class InputManager:
     def press_all(self, indexes: list[bool], field: str, hold_seconds: float, wait_after: float):
         for i, index in enumerate(indexes):
             if index:
-                self._press(field, i, hold_seconds, wait_after)
+                self.press(field, i, hold_seconds, wait_after)
+
+    def reset_inputs(self, player_index: int):
+        prev = self.prev_buttons_held[player_index]
+        for field in BUTTON_FIELDS:
+            self.bridge.set_joy_button(player_index, field, False)
+            prev[field] = False
+        for field in STICK_FIELDS:
+            self.bridge.set_joy_axis(player_index, field, 0)
     
     # reset the input state for all players
     # both joystick axes set to 0 and all buttons released

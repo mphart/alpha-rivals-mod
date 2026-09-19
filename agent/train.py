@@ -36,7 +36,7 @@ def main():
     )
 
     kwargs = dict(
-        net_arch=[512, 256, 256],
+        net_arch=[512, 256, 256, 128],
         activation_fn=nn.ReLU,
         ortho_init=True,
     )
