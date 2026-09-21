@@ -63,7 +63,7 @@ RIGHT = 1.0
 TRUE = 1.0
 FALSE = 0.0
 
-OBS_DIM = 596
+OBS_DIM = 112#596
 
 
 class ObservationManager:
@@ -79,10 +79,10 @@ class ObservationManager:
         self.num_ground_fire_slots_per_player = 3
         self.values_per_ground_fire = 2
 
-        self.num_puddle_slots_per_player = 1
+        self.num_puddle_slots_per_player = 0#1
         self.values_per_puddle = 2
 
-        self.num_bubble_slots_per_player = 60
+        self.num_bubble_slots_per_player = 0#60
         self.values_per_bubble = 4
 
         per_player = (
@@ -175,14 +175,14 @@ class ObservationManager:
             ground_fires, slot, self.num_ground_fire_slots_per_player,
             self.values_per_ground_fire, self._get_fire_values
         ))
-        values.extend(self._owned_values(
-            puddles, slot, self.num_puddle_slots_per_player,
-            self.values_per_puddle, self._get_puddle_values
-        ))
-        values.extend(self._owned_values(
-            bubbles, slot, self.num_bubble_slots_per_player,
-            self.values_per_bubble, self._get_bubble_values
-        ))
+        # values.extend(self._owned_values(
+        #     puddles, slot, self.num_puddle_slots_per_player,
+        #     self.values_per_puddle, self._get_puddle_values
+        # ))
+        # values.extend(self._owned_values(
+        #     bubbles, slot, self.num_bubble_slots_per_player,
+        #     self.values_per_bubble, self._get_bubble_values
+        # ))
         return values
 
     def _player_at(self, players: list, index: int | None) -> dict | None:

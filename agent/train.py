@@ -20,10 +20,10 @@ from env import RoAEnv
 
 # Set this to a checkpoint path (e.g. "./checkpoints/ppo_roa_20000_steps")
 # to resume training from it. Leave as None to start fresh.
-RESUME_FROM_CHECKPOINT =  None
+RESUME_FROM_CHECKPOINT = './checkpoints/zetterburn_1v1_5604810_steps.zip'
 
 TOTAL_TIMESTEPS = 100_000_000
-N_ENVS = 3  # one subprocess per injected game instance
+N_ENVS = 4  # one subprocess per injected game instance
 CHECKPOINT_EVERY = 100_000  # timesteps between checkpoint files
 
 
@@ -48,7 +48,7 @@ def main():
         model = IndependentPPO(
             policy="MlpPolicy",
             env=env,
-            n_steps=4000,           # rollout length per env before each PPO update
+            n_steps=3000,           # rollout length per env before each PPO update
             batch_size=500,
             n_epochs=12,
             gamma=0.99,             # discount factor
@@ -65,7 +65,7 @@ def main():
     checkpoint_callback = CheckpointCallback(
         save_freq=max(CHECKPOINT_EVERY // N_ENVS, 1),
         save_path="./checkpoints/",
-        name_prefix="selfplay_zetter_orcane_1v1",
+        name_prefix="zetterburn_1v1",
     )
 
     model.learn(
@@ -75,7 +75,7 @@ def main():
         reset_num_timesteps=(RESUME_FROM_CHECKPOINT is None),
     )
 
-    model.save("selfplay_zetter_orcane")
+    model.save("zetterburn_1v1")
 
 
 if __name__ == "__main__":

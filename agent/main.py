@@ -12,8 +12,8 @@ import time
 FPS = 30
 
 AGENT_INDEXES = [False, True, False, False]
-AGENT_CHARACTER_CHOICES = [0, 3, 0, 0]
-AGENT_MODEL = './checkpoints/selfplay_zetter_orcane_1v1_3595580_steps.zip'
+AGENT_CHARACTER_CHOICES = [0, 2, 0, 0]
+AGENT_MODEL = './checkpoints/zetterburn_1v1_5604810_steps.zip'
 
 def main():
     bridge = Bridge()

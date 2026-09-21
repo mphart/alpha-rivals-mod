@@ -46,12 +46,15 @@ class RoAEnv(gym.Env):
         
         # info & tracking
         self.prev_state = None
+        self.prev_time = None
         self.steps_this_episode = 0
 
         self.observation_space = self.obs_manager.get_obs_space()
         self.action_space = self.input_manager.get_action_space()
 
         print(f"[RoAEnv] connected to {self.bridge.pipe_name}", flush=True)
+        print(f"[RoAEnv] observation space: {self.observation_space}", flush=True)
+        print(f"[RoAEnv] action space: {self.action_space}", flush=True)
 
     # ------------------------------------------------------------------
     # Gym API
@@ -63,12 +66,12 @@ class RoAEnv(gym.Env):
         self.input_manager.reset_all_inputs()
 
         # run the reset
-        self.agent_index = self.reset_manager.random_agent_index()
-        print(f"[RoAEnv] agent index: {self.agent_index}")
-        self.num_opponents = self.reset_manager.random_num_opponents()
+        self.agent_index = 0 #self.reset_manager.random_agent_index()
+        # print(f"[RoAEnv] agent index: {self.agent_index}")
+        self.num_opponents = 0 #self.reset_manager.random_num_opponents()
         self.active_indexes = [True, True, False, False] #self.reset_manager.random_active_indexes(self.agent_index, self.num_opponents)
-        self.character_choices = self.reset_manager.random_character_choices(self.active_indexes)
-        self.opponents = self.reset_manager.random_static_opponents(self.agent_index, self.active_indexes)
+        self.character_choices = [2, 2, 0, 0] #self.reset_manager.random_character_choices(self.active_indexes)
+        self.opponents = [None, None, None, None] #self.reset_manager.random_static_opponents(self.agent_index, self.active_indexes)
         self.player_stocks = self.reset_manager.random_player_stocks()
         self.reset_manager.restart_match(self.agent_index, self.character_choices, self.player_stocks)
 
@@ -77,32 +80,35 @@ class RoAEnv(gym.Env):
         obs = self.obs_manager.get_obs(state, self.agent_index)
         self.prev_state = state
         self.steps_this_episode = 0
+        self.prev_time = time.time()
 
         info = {}
         return obs, info
 
     def step(self, action):
         # get opponent observations
-        opponent_observations = []
-        for i in range(4):
-            if self.active_indexes[i] == True and self.opponents[i] is not None:
-                # (observation, player_index)
-                observation = self.obs_manager.get_obs(self.prev_state, i)
-                opponent_observations.append((observation, i))
+        # opponent_observations = []
+        # for i in range(4):
+        #     if self.active_indexes[i] == True and self.opponents[i] is not None:
+        #         # (observation, player_index)
+        #         observation = self.obs_manager.get_obs(self.prev_state, i)
+        #         opponent_observations.append((observation, i))
 
-        # get opponent action(s)
-        opponent_actions = []
-        for opp_obs, index in opponent_observations:
-            if self.active_indexes[index] == True and self.opponents[index] is not None:
-                opp_action, _ = self.opponents[index].predict(opp_obs)
-                opponent_actions.append((opp_action, index))
+        # # get opponent action(s)
+        # opponent_actions = []
+        # for opp_obs, index in opponent_observations:
+        #     if self.active_indexes[index] == True and self.opponents[index] is not None:
+        #         opp_action, _ = self.opponents[index].predict(opp_obs)
+        #         opponent_actions.append((opp_action, index))
 
         # apply actions
         self.input_manager.apply_action(action, self.agent_index)
-        for opp_action, player_index in opponent_actions:
-            self.input_manager.apply_action(opp_action, player_index)
+        # for opp_action, player_index in opponent_actions:
+        #     self.input_manager.apply_action(opp_action, player_index)
 
         # hold the actions for a fixed slice of real time
+        curr_time = time.time()
+        delta = curr_time - self.prev_time
         time.sleep(self.step_duration)
 
         # get the new state

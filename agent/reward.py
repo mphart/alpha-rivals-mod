@@ -4,14 +4,16 @@ This class is used to compute the reward for a given agent index.
 It is used to compute the reward for the agent based on the previous and current state of the game.
 """
 
+import math
+
 class RewardManager():
     def __init__(self):
-        self.self_existence_reward = 0.001
-        self.self_stock_loss_reward = -5
-        self.self_percent_gain_reward = -0.003
+        self.self_existence_reward = 0.0
+        self.self_stock_loss_reward = -6.0
+        self.self_percent_gain_reward = -0.001
         self.self_action_reward = -0.0005
         self.opponent_existence_reward = 0
-        self.opponent_stock_loss_reward = 3
+        self.opponent_stock_loss_reward = 3.0
         self.opponent_percent_gain_reward = 0.01
 
     # helper to get the player state from the state dict
@@ -79,4 +81,6 @@ class RewardManager():
                         diff = curr_percent - prev_percent
                         reward += self.opponent_percent_gain_reward * diff
 
+        if math.fabs(reward) > 1:
+            print(f"[RewardManager] big reward: {reward}")
         return reward
