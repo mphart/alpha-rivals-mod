@@ -36,7 +36,7 @@ def main():
     )
 
     kwargs = dict(
-        net_arch=[512, 256, 256, 128],
+        net_arch=[512, 512, 256, 256],
         activation_fn=nn.ReLU,
         ortho_init=True,
     )
@@ -48,9 +48,9 @@ def main():
         model = IndependentPPO(
             policy="MlpPolicy",
             env=env,
-            n_steps=3000,           # rollout length per env before each PPO update
-            batch_size=500,
-            n_epochs=12,
+            n_steps=2000,           # rollout length per env before each PPO update
+            batch_size=250,
+            n_epochs=10,
             gamma=0.99,             # discount factor
             gae_lambda=0.95,
             clip_range=0.2,

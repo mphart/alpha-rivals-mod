@@ -32,10 +32,6 @@ struct OPlayerState {
     uint32_t have; // bit i set => field i was a numeric RValue
 };
 
-// Walk the room instance list for oPlayer (object_index 3) and fill out[4]
-// indexed by player (fallback: track_player), both 1-based. Returns how many slots were written.
-int ReadOPlayerInstances(OPlayerState out[4]);
-
 struct ProjectileState {
     bool valid;
     float x;
@@ -47,16 +43,13 @@ struct ProjectileState {
     uint32_t have;
 };
 
-struct GroundFireState {
+struct FireState {
     bool valid;
     float x;
     float y;
     double player;
     uint32_t have;
 };
-
-int ReadProjectileInstances(ProjectileState* out, int maxCount);
-int ReadGroundFireInstances(GroundFireState* out, int maxCount);
 
 struct BubbleState {
     bool valid;
@@ -76,6 +69,11 @@ struct PuddleState {
     uint32_t have;
 };
 
+// Walk the room instance list for oPlayer (object_index 3) and fill out[4]
+// indexed by player (fallback: track_player), both 1-based. Returns how many slots were written.
+int ReadOPlayerInstances(OPlayerState out[4]);
+int ReadProjectileInstances(ProjectileState* out, int maxCount);
+int ReadGroundFireInstances(FireState* out, int maxCount);
 int ReadBubbleInstances(BubbleState* out, int maxCount);
 int ReadPuddleInstances(PuddleState* out, int maxCount);
 

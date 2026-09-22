@@ -15,7 +15,7 @@ from obs import ObservationManager
 from input import InputManager
 
 FPS = 30
-
+SECONDS_PER_MINUTE = 60
 
 class RoAEnv(gym.Env):
     metadata = {"render_modes": []}
@@ -23,7 +23,7 @@ class RoAEnv(gym.Env):
     def __init__(
         self,
         step_duration: float = 1.0 / FPS,  # how long an action is held, seconds (game is 60 fps, so 1/30 is 30 fps)
-        max_episode_steps: int = 100 * 60 * FPS,   # 100 minutes of game time at FPS steps/sec
+        max_episode_steps: int = 2 * SECONDS_PER_MINUTE * FPS,   # 2 minutes of game time at FPS steps/sec
     ):
         super().__init__()
 
@@ -109,7 +109,11 @@ class RoAEnv(gym.Env):
         # hold the actions for a fixed slice of real time
         curr_time = time.time()
         delta = curr_time - self.prev_time
-        time.sleep(self.step_duration)
+        if delta < self.step_duration:
+            time.sleep(self.step_duration - delta)
+        else:
+            print(f"[RoAEnv] step duration exceeded: {delta} seconds")
+        self.prev_time = curr_time
 
         # get the new state
         curr_state = self.bridge.get_state()

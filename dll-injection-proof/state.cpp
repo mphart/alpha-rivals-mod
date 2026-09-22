@@ -9,12 +9,6 @@ uintptr_t GetModuleBase(const char* moduleName) {
     return (uintptr_t)GetModuleHandleA(moduleName);
 }
 
-std::string ToHex(uintptr_t val) {
-    std::stringstream ss;
-    ss << "0x" << std::hex << val;
-    return ss.str();
-}
-
 uintptr_t FollowOffsetChain(uintptr_t base, std::initializer_list<uintptr_t> offsets) {
     uintptr_t addr = base;
     if (offsets.size() == 0) {
@@ -797,7 +791,7 @@ static bool ReadProjectileFromInstance(uintptr_t instance, ProjectileState* out)
     return true;
 }
 
-static bool ReadGroundFireFromInstance(uintptr_t instance, GroundFireState* out) {
+static bool ReadGroundFireFromInstance(uintptr_t instance, FireState* out) {
     if (!out) return false;
     memset(out, 0, sizeof(*out));
     if (!ReadInstanceXY(instance, &out->x, &out->y)) return false;
@@ -1083,7 +1077,7 @@ int ReadProjectileInstances(ProjectileState* out, int maxCount) {
     return n;
 }
 
-int ReadGroundFireInstances(GroundFireState* out, int maxCount) {
+int ReadGroundFireInstances(FireState* out, int maxCount) {
     if (!out || maxCount <= 0) return 0;
     int n = 0;
     __try {
@@ -1252,12 +1246,12 @@ std::string BuildGameStateJson() {
     }
     json << "],";
 
-    GroundFireState ground[kMaxGroundFires];
+    FireState ground[kMaxGroundFires];
     int nGround = ReadGroundFireInstances(ground, kMaxGroundFires);
     json << "\"ground\":[";
     for (int i = 0; i < nGround; ++i) {
         if (i > 0) json << ",";
-        const GroundFireState& fire = ground[i];
+        const FireState& fire = ground[i];
         json << "{\"x\":" << fire.x << ",\"y\":" << fire.y;
         if (fire.have & 1u) json << ",\"player\":" << fire.player;
         json << "}";

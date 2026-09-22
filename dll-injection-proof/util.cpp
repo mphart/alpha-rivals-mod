@@ -21,3 +21,9 @@ void Log(const std::string& msg) {
     //}
     //log << msg << std::endl;
 }
+
+std::string ToHex(uintptr_t val) {
+    std::stringstream ss;
+    ss << "0x" << std::hex << val;
+    return ss.str();
+}

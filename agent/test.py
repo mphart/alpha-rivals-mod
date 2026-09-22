@@ -165,4 +165,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    #main()
+    bridge = Bridge()
+
+    instances = bridge.send("list_instances")
+    print(json.dumps(json.loads(instances), indent=4))
+
+    # vars = bridge.send("dump_vars 22")
+    # print(vars)
+    vars = bridge.send("dump_vars 40")
+    print(vars)
+    # if vars:
+    #     print(json.dumps(["["+vars+"]"], indent=4))
